@@ -38,3 +38,4 @@ h2{font-size:1.15rem;margin:0;font-weight:800}
 .empty{color:var(--mute);padding:14px 2px}
 .wipe{text-align:center;margin-top:30px}
 @media (prefers-reduced-motion:reduce){.arc{transition:none}}
+.back{margin:0 0 6px}.back a{color:var(--btn);font-weight:700;text-decoration:none}
