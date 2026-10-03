@@ -1,12 +1,13 @@
 // All data is saved in the browser (localStorage). Nothing is sent to a server.
-const KEY='vaultcore-v3',C=2*Math.PI*44,$=s=>document.querySelector(s);
+const KEY='stashtronauts-v1',OLD_KEY='vaultcore-v3',C=2*Math.PI*44,$=s=>document.querySelector(s);
 const uid=()=>Math.random().toString(36).slice(2,9);
 const blank=()=>({extra:0,assets:[],debts:[],cores:[]});
 const sample=()=>({extra:100,assets:[{id:uid(),name:'Checking account',value:4200},{id:uid(),name:'Savings account',value:12000},{id:uid(),name:'Retirement (401k)',value:38000}],
 debts:[{id:uid(),name:'Student loan',balance:18000,apr:5.5,min:220},{id:uid(),name:'Credit card',balance:3200,apr:22.9,min:90}],
 cores:[{id:uid(),name:'New car',type:'goal',target:15000,amount:1000,monthly:400},{id:uid(),name:'Groceries this month',type:'budget',target:600,amount:180}]});
 let S=load(),tab='home',prev={},armed=null,note={};
-function load(){try{const s=localStorage.getItem(KEY);if(s)return JSON.parse(s)}catch(e){}return blank()}
+// One-time move of data saved under the project's old name. The old copy is left in place as a backup.
+function load(){try{let s=localStorage.getItem(KEY);if(!s&&(s=localStorage.getItem(OLD_KEY)))localStorage.setItem(KEY,s);if(s)return JSON.parse(s)}catch(e){}return blank()}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 const fmt=n=>(n<0?'-':'')+'$'+Math.round(Math.abs(n)).toLocaleString();
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
