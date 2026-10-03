@@ -1,35 +1,52 @@
-# Vaultcore (working title)
+# Stashtronauts
+# Stashtronauts (working title)
 
-A beginner-friendly money tracker for people who find finance apps intimidating. Plain-English wording, no account, no bank connection: all data stays on the user's device.
+Turn your savings goals into planets you can watch grow. A friendly money tracker for people who find finance apps intimidating, growing into a playable space world.
 
-## Features
-- **What you have:** track accounts and see "what you have minus what you owe"
+**Live demo:** https://YOUR-USERNAME.github.io/money-world/
+
+**Status:** The tracker works today. The planet world is in active development.
+
+## What it does today
+- **What you have:** track your accounts and see what you have minus what you owe
 - **Goals and limits:** savings goals with a projected finish date, plus monthly spending limits that drain as you spend
-- **Debts and payoff plan:** compares "highest interest first" vs. "smallest balance first" with debt-free date and total interest, and shows what extra payments save
+- **Debts and payoff plan:** compares paying highest interest first vs. smallest balance first, with a debt-free date, total interest, and what extra payments save
+- **Plain-English wording** throughout, with a guided start for first-time users
 
-## Run it
-1. Open this folder in VS Code
-2. Install the **Live Server** extension
-3. Right-click `index.html` > Open with Live Server
+## Privacy first
+No account, no bank connection, no server. Everything is saved in your browser on your own device.
 
-## Deploy (free)
-Push to GitHub, then Settings > Pages > deploy from the `main` branch.
-
-## How it works
-- Plain HTML, CSS and JavaScript, no frameworks
-- `sim()` in `app.js` runs a month-by-month payoff simulation with compounding interest and rolled-over payments
-- State is saved with `localStorage`, so there is no backend
-
-## Roadmap: the planet world
-Replace the tabs with a space scene where each goal is a planet.
-- Fixed planet names from mythology/astronomy plus a user label (e.g. "Elysium: Car fund")
-- Planet looks built from layers: ~6 biomes x ~5 landmark themes x variation seeded from the planet's name
-- Residents built from mix-and-match parts, with idle routines (walk, fish, build) and moods that follow saving habits
-- Deposits land as cargo pods; transfers fly between planets by spaceship; planned withdrawals leave as supply ships; unplanned ones arrive as asteroids that leave craters which heal as savings rebuild
+## The vision
+Replace the tabs with a free-flying space scene.
+- Each goal is a planet with a fixed mythology-inspired name plus your own label, like "Elysium: Car fund"
+- Planet looks are generated from layers (biome, landmarks, variation seeded from the name), so no two look the same
+- Tap a planet to zoom in and meet its residents, who have personalities and moods that follow your saving habits
+- Deposits arrive as cargo pods, transfers fly between planets by spaceship, planned withdrawals leave as supply ships, and unplanned ones arrive as asteroids that leave craters which heal as savings rebuild
 - An emergency fund acts as a planet shield
-- A guide character the user names, plus a nameable universe, with a short onboarding flow
-- Later: AI chat guide (needs a small backend), shared universes for couples
+- A paranoid, never-landing guide in a cluttered ship spots asteroids first and walks new users through a hands-on tutorial
 
-## Notes
-- Name "Orbitly" was rejected after a web search found several existing products using it; pick and check a new name (USPTO, domain, GitHub, socials) before launch.
-- This is a tracking tool, not financial advice.
+**Art direction:** original designs inspired by the calm, chunky worlds of Astroneer and the expressive characters of Tomodachi Life, built entirely in code.
+
+## Roadmap
+- [x] Working tracker: accounts, goals, budgets, debt payoff planner
+- [x] Live on GitHub Pages
+- [ ] Space view with pan and zoom
+- [ ] Procedurally generated planets
+- [ ] Zoom into planets and meet residents
+- [ ] Money events: deposits, withdrawals, transfers
+- [ ] The guide and onboarding tutorial
+- [ ] Debt planet and spending belt
+- [ ] Later: AI-powered guide, shared universes for couples
+
+## Technical highlights
+- Plain HTML, CSS, and JavaScript with no frameworks
+- A month-by-month payoff simulation (`sim()` in `app.js`) with compounding interest and rolled-over payments
+- State saved with `localStorage`, so there is no backend
+
+## Run it locally
+1. Open this folder in VS Code
+2. Install the Live Server extension
+3. Right-click `index.html` and choose Open with Live Server
+
+## Disclaimer
+This is a tracking tool, not financial advice.
