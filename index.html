@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stashtronauts</title>
+<meta name="description" content="Your savings goals as planets you can fly between.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap">
+<link rel="stylesheet" href="space.css">
+</head>
+<body>
+<canvas id="space" aria-label="Space map of your savings goals. Drag to look around, scroll or pinch to zoom." role="img"></canvas>
+
+<header class="bar">
+  <h1>Stashtronauts</h1>
+  <a class="pill" href="tracker.html">Open tracker</a>
+</header>
+
+<div class="zoom" role="group" aria-label="Camera">
+  <button id="zoomIn" aria-label="Zoom in">+</button>
+  <button id="zoomOut" aria-label="Zoom out">&minus;</button>
+  <button id="home" aria-label="Show all planets">&#8962;</button>
+</div>
+
+<script src="space.js"></script>
+</body>
+</html>
