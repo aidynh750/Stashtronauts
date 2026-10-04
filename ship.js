@@ -148,7 +148,7 @@ export function makeShip(colors = SHIP_COLORS) {
 
 
   // ---------- World-space things: the trail and the tow pod ----------
-  const TRAIL = 260, trailPos = new Float32Array(TRAIL * 3), trailCol = new Float32Array(TRAIL * 3), trailAge = new Float32Array(TRAIL).fill(99);
+  const TRAIL = 700, trailPos = new Float32Array(TRAIL * 3), trailCol = new Float32Array(TRAIL * 3), trailAge = new Float32Array(TRAIL).fill(99);
   const trailGeo = new THREE.BufferGeometry();
   trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
   trailGeo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
@@ -177,13 +177,14 @@ export function makeShip(colors = SHIP_COLORS) {
 
   // ---------- The cutaway: open (1) slides the near hull and roof away; closed (0) is a solid ship ----------
   let open = 0, openTarget = 0, cutSide = null;
-  const center = new THREE.Vector3(), up = new THREE.Vector3(), toShip = new THREE.Vector3(), qBody = new THREE.Quaternion();
+  const center = new THREE.Vector3(), up = new THREE.Vector3(), toShip = new THREE.Vector3(), qBody = new THREE.Quaternion()
+  const camW = new THREE.Vector3();
   function setView(camera) {
     body.updateMatrixWorld();
     center.setFromMatrixPosition(body.matrixWorld);
     up.set(0, 1, 0).applyQuaternion(body.getWorldQuaternion(qBody));
     if (cutSide) toShip.set(-cutSide, 0, 0).applyQuaternion(qBody);    // free camera: the cut stays on one side of the ship
-    else { toShip.copy(center).sub(camera.position); toShip.addScaledVector(up, -toShip.dot(up)).normalize(); }
+    else { toShip.copy(center).sub(camera.getWorldPosition(camW)); toShip.addScaledVector(up, -toShip.dot(up)).normalize(); }
     const e = open * open * (3 - 2 * open);                        // smoothstep, so the panels ease in and out
     const sideCut = (1 - e) * 30, roofCut = ROOF_Y + (1 - e) * 30; // closed: far outside the ship (nose to engine), so nothing is clipped
     cutPlanes[0].setFromNormalAndCoplanarPoint(toShip, center.clone().addScaledVector(toShip, -sideCut));
@@ -220,7 +221,7 @@ export function makeShip(colors = SHIP_COLORS) {
     root.updateMatrixWorld();
     tail.set(0, -1.0, 9.7).applyMatrix4(body.matrixWorld);
     if (flameLevel > 0.3 && !reduced) {
-      const from = trailLast || tail, steps = Math.min(8, Math.max(1, Math.ceil(from.distanceTo(tail) / 0.7)));
+      const from = trailLast || tail, steps = Math.min(20, Math.max(1, Math.ceil(from.distanceTo(tail) / 0.7)));   // more points at speed, so the trail stays a line
       for (let i = 1; i <= steps; i++) {
         tmp.lerpVectors(from, tail, i / steps);
         trailPos.set([tmp.x, tmp.y, tmp.z], trailNext * 3); trailAge[trailNext] = (steps - i) / steps * dt;
@@ -242,9 +243,16 @@ export function makeShip(colors = SHIP_COLORS) {
     }
   }
 
+  // The trail and the tow pod live in render space; when the world is re-centred (space.js), shift them with it.
+  function rebase(d) {
+    for (let i = 0; i < TRAIL; i++) { trailPos[i * 3] -= d.x; trailPos[i * 3 + 1] -= d.y; trailPos[i * 3 + 2] -= d.z; }
+    trailGeo.attributes.position.needsUpdate = true;
+    if (trailLast) trailLast.sub(d);
+    towPod.group.position.sub(d);
+  }
   const headPos = new THREE.Vector3();
   return {
-    root, body, pilot, crew, gear: outside, world: [trail, towPod.group, tether], radius: 9.5, setMoney, setView, update,
+    root, body, pilot, crew, gear: outside, world: [trail, towPod.group, tether], radius: 9.5, setMoney, setView, update, rebase,
     clickables: interior.clickables, blockedPaths: interior.blocked, checkExterior: () => outside.check(), // the dashboard screen: clicking it opens the console
     // 0 = solid hull, 1 = fully open cutaway. Set the target; it eases there.
     get open() { return open; }, get openTarget() { return openTarget; }, setOpen(v) { openTarget = v ? 1 : 0; },

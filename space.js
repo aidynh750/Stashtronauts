@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { load, goalsOf, planetNames, shipMoney, isEmergencyFund, fmt, KEY, NAMES_KEY } from './money.js';
 import { makeShip } from './ship.js';
 import { makeFleet } from './fleet.js';
+import { airProfile, airLevels, makeAirFX } from './atmosphere.js';
 import { MOODS } from './pilot.js';
 
 const cv = document.getElementById('space');
@@ -54,7 +55,17 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.localClippingEnabled = true; // for the ship's dollhouse cutaway
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, 1, 0.2, 40000);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.2, 150000);
+// Floating origin: everything in the world (planets, ships, the fleet, the camera) lives in `universe`, whose position is
+// moved now and then so the camera stays near the real origin. Positions in code stay in universe space; only what the
+// GPU sees is re-centred, so nothing jitters however far you fly. The sky and the sun stay outside it, around the camera.
+const universe = new THREE.Group(), origin = new THREE.Vector3();
+scene.add(universe); universe.add(camera);
+const camWorld = new THREE.Vector3(), lookTmp = new THREE.Vector3();
+const camLookAt = v => camera.lookAt(lookTmp.copy(v).add(universe.position));   // lookAt wants world space
+let baseFov = 60;
+// What the air around the ship is doing (filled in by atmosphere.js each frame; see makeAirFX below).
+let air = { maxSpeed: Infinity, flare: 0, shake: new THREE.Vector3(), fov: 0, starFade: 1, layer: null };
 const coarse = matchMedia('(pointer: coarse)').matches; // phones and tablets get fewer pixels to draw
 
 function resize() {
@@ -63,7 +74,7 @@ function resize() {
   camera.aspect = innerWidth / innerHeight;
   // On tall phone screens, widen the view so it is never a narrow slit.
   const minWide = THREE.MathUtils.degToRad(64);
-  camera.fov = Math.min(95, Math.max(60, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(minWide / 2) / camera.aspect))));
+  camera.fov = baseFov = Math.min(95, Math.max(60, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(minWide / 2) / camera.aspect))));
   camera.updateProjectionMatrix();
 }
 
@@ -147,7 +158,7 @@ function bakeNebula() {
 
 // Stars in every direction at different brightness, plus a denser band along the galaxy.
 function makeStars() {
-  const r = rng(424242), count = coarse ? 6000 : 9000, R = 2500;
+  const r = rng(424242), count = coarse ? 6000 : 9000, R = 50000;   // far beyond any planet, so nothing is ever behind the stars
   const pos = new Float32Array(count * 3), col = new Float32Array(count * 3), size = new Float32Array(count);
   const bandN = new THREE.Vector3(0.3, 1, 0.25).normalize(), v = new THREE.Vector3(), c = new THREE.Color();
   const tints = ['#FFFFFF', '#FFFFFF', '#DCE6FF', '#BFD6FF', '#FFE3B8', '#FFD2A6'];
@@ -168,7 +179,7 @@ function makeStars() {
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setAttribute('size', new THREE.BufferAttribute(size, 1));
   const m = new THREE.ShaderMaterial({
-    uniforms: { pr: { value: 1 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { pr: { value: 1 }, fade: { value: 1 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     vertexShader: `#include <common>
       #include <logdepthbuf_pars_vertex>
       attribute float size; attribute vec3 color; varying vec3 vC; uniform float pr;
@@ -176,10 +187,10 @@ function makeStars() {
         #include <logdepthbuf_vertex>
       }`,
     fragmentShader: `#include <logdepthbuf_pars_fragment>
-      varying vec3 vC;
+      varying vec3 vC; uniform float fade;
       void main(){
         #include <logdepthbuf_fragment>
-        float d = length(gl_PointCoord - 0.5) * 2.0; float a = pow(max(1.0 - d, 0.0), 2.2); gl_FragColor = vec4(vC * a, 1.0); }`,
+        float d = length(gl_PointCoord - 0.5) * 2.0; float a = pow(max(1.0 - d, 0.0), 2.2); gl_FragColor = vec4(vC * a * fade, 1.0); }`,
   });
   const pts = new THREE.Points(g, m);
   pts.renderOrder = -2; pts.frustumCulled = false;
@@ -200,20 +211,19 @@ function makeSun() {
   const add = (stops, scale, opacity) => {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(stops), blending: THREE.AdditiveBlending,
       depthWrite: false, transparent: true, opacity, toneMapped: false }));
-    s.scale.setScalar(scale); s.position.copy(SUN_DIR).multiplyScalar(2200); s.renderOrder = -1; group.add(s);
+    s.scale.setScalar(scale * 20); s.position.copy(SUN_DIR).multiplyScalar(44000); s.renderOrder = -1; group.add(s);
   };
   add([[0, 'rgba(255,214,160,0.5)'], [0.3, 'rgba(255,170,110,0.12)'], [1, 'rgba(255,140,90,0)']], 1500, 0.8);
   add([[0, 'rgba(255,255,245,1)'], [0.22, 'rgba(255,240,205,1)'], [0.32, 'rgba(255,205,140,0.45)'], [1, 'rgba(255,180,120,0)']], 190, 1);
   return group;
 }
 
-// Fine dust hanging still in space. It never moves, but it slides past as you fly, which sells depth.
-function makeDust(radius) {
+// Fine dust hanging still in space. It never moves, but it slides past as you fly, which sells depth and speed.
+// It fills a box around the camera; specks that fall out of the box wrap round to the other side (see wrapDust).
+const DUST_BOX = 700;
+function makeDust() {
   const r = rng(777), count = coarse ? 500 : 900, pos = new Float32Array(count * 3);
-  for (let i = 0; i < count; i++) {
-    const d = radius * Math.cbrt(r()), th = r() * Math.PI * 2, ph = Math.acos(r() * 2 - 1);
-    pos.set([d * Math.sin(ph) * Math.cos(th), d * Math.cos(ph), d * Math.sin(ph) * Math.sin(th)], i * 3);
-  }
+  for (let i = 0; i < count * 3; i++) pos[i] = (r() - 0.5) * DUST_BOX;
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   return new THREE.Points(g, new THREE.PointsMaterial({ color: '#9FB2E8', size: 0.7, sizeAttenuation: true,
@@ -229,6 +239,8 @@ const EXAMPLES = [
   { id: 'ex4', myth: 'Vesta', label: 'New laptop', amount: 1200, target: 1200 },
   { id: 'ex5', myth: 'Hyperion', label: 'House deposit', amount: 9000, target: 30000 },
 ].map((p, slot) => ({ ...p, slot, progress: p.amount / p.target }));
+// An example debt, shown as a stormy planet when there's no saved data yet.
+const EXAMPLE_DEBT = { id: 'debt-ex', myth: 'Tempest', label: 'Credit card', slot: 1000, progress: 0.55, debt: true, storm: 0.7 };
 const EXAMPLE_FUND = 3100;   // the example emergency fund: $3,100, guarded by the fleet instead of a planet
 
 // Biomes are calm, chunky color sets from docs/STYLE.md. A planet's name decides which one it gets.
@@ -243,22 +255,43 @@ const BIOMES = [
 ];
 
 // The emergency fund is not a planet: it's the guardian fleet (fleet.js). It keeps its name and slot, so nothing moves.
-function readGoals() {
-  const goals = goalsOf(load());
-  if (!goals.length) return { list: EXAMPLES, examples: true };
-  const names = planetNames(goals);
-  return { list: goals.filter(g => !isEmergencyFund(g)).map(g => ({ id: g.id, myth: names[g.id].myth, slot: names[g.id].slot, label: g.name,
-    progress: clamp((+g.amount || 0) / (+g.target || 1), 0, 1) })), examples: false };
+// Debts are stormy planets: the storm is how much is still owed compared with the most ever owed on that debt.
+const STORM_NAMES = ['Tempest', 'Typhon', 'Nimbus', 'Squall', 'Maelstrom', 'Gale', 'Cyclone', 'Thunderhead', 'Brontes', 'Aeolus'];
+const DEBT_PEAKS_KEY = 'stashtronauts-debt-peaks';
+function debtPlanets(S, taken) {
+  let peaks = {}; try { peaks = JSON.parse(localStorage.getItem(DEBT_PEAKS_KEY)) || {}; } catch (e) {}
+  const out = S.debts.filter(d => +d.balance > 0).map((d, i) => {
+    const bal = +d.balance; peaks[d.id] = Math.max(+peaks[d.id] || 0, bal);
+    let k = hash(d.id) % STORM_NAMES.length, myth = STORM_NAMES[k];
+    for (let n = 2; taken.has(myth); k++) myth = STORM_NAMES[k % STORM_NAMES.length] + (k >= STORM_NAMES.length ? ' ' + n++ : '');
+    taken.add(myth);
+    return { id: 'debt-' + d.id, myth, slot: 1000 + i, label: d.name, progress: 0.55, debt: true, storm: clamp(bal / peaks[d.id], 0.15, 1) };
+  });
+  try { localStorage.setItem(DEBT_PEAKS_KEY, JSON.stringify(peaks)); } catch (e) {}
+  return out;
 }
+function readGoals() {
+  const S = load(), goals = goalsOf(S);
+  if (!goals.length) return { list: [...EXAMPLES, EXAMPLE_DEBT], examples: true };
+  const names = planetNames(goals);
+  const list = goals.filter(g => !isEmergencyFund(g)).map(g => ({ id: g.id, myth: names[g.id].myth, slot: names[g.id].slot, label: g.name,
+    progress: clamp((+g.amount || 0) / (+g.target || 1), 0, 1) }));
+  return { list: [...list, ...debtPlanets(S, new Set(list.map(p => p.myth)))], examples: false };
+}
+const STORM_BIOME = { name: 'storm', tint: '#5A5470', kind: 'bands', land: ['#3E3A52', '#4A4560', '#5A5470', '#36324A', '#6A6382', '#433E58'], atmo: '#8A80B8' };
 // A planet starts at 70% of its full size and reaches full size when its goal is met.
 const sizeFor = progress => 0.7 + 0.3 * progress;
 
 // Decide a planet's look from its name. Same name in, same planet out.
 // The +27 nudges the seeds so the first few planets someone makes all get different biomes.
-function makeLook(name) {
+// Planets are big: at full size from 105 to 276 units across the middle (the ship is 18.4 long), so the smallest is about
+// 8 ship lengths across even when its goal has just started, and the largest about 30.
+const PLANET_R = old => 105 + (old - 7) / 12 * 171;
+function makeLook(name, debt = false) {
   const r = rng(hash(name) + 27);
-  const biome = BIOMES[Math.floor(r() * BIOMES.length)];
-  const radius = biome.kind === 'bands' ? 13 + r() * 6 : 7 + r() * 5;
+  let biome = BIOMES[Math.floor(r() * BIOMES.length)];
+  const radius = PLANET_R(biome.kind === 'bands' ? 13 + r() * 6 : 7 + r() * 5);
+  if (debt) biome = STORM_BIOME;
   const ringChance = biome.kind === 'bands' ? 0.75 : 0.3;
   return {
     biome, radius, seed: hash(name) ^ 0x9E3779B9,
@@ -305,9 +338,9 @@ void main(){ vN = normalize(normalMatrix * normal); vWN = normalize(mat3(modelMa
   #include <logdepthbuf_vertex>
 }`;
 const LOGDEPTH_FRAG = '#include <logdepthbuf_pars_fragment>\n';
-function atmosphere(color, radius) {
-  const uniforms = { color: { value: new THREE.Color(color) }, sunDir: { value: SUN_DIR }, edge: { value: Math.sqrt(1 - 1 / (1.18 * 1.18)) }, boost: { value: 1 } };
-  const halo = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.18, 48, 32), new THREE.ShaderMaterial({
+function atmosphere(color, radius, haloK = 1.18) {
+  const uniforms = { color: { value: new THREE.Color(color) }, sunDir: { value: SUN_DIR }, edge: { value: Math.sqrt(1 - 1 / (haloK * haloK)) }, boost: { value: 1 } };
+  const halo = new THREE.Mesh(new THREE.SphereGeometry(radius * haloK, 64, 40), new THREE.ShaderMaterial({
     uniforms, vertexShader: ATMO_VERT, side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     fragmentShader: LOGDEPTH_FRAG + `uniform vec3 color; uniform vec3 sunDir; uniform float edge; uniform float boost; varying vec3 vN; varying vec3 vWN; varying vec3 vP;
       void main(){
@@ -316,7 +349,7 @@ function atmosphere(color, radius) {
         float lit = smoothstep(-0.45, 0.7, dot(normalize(vWN), sunDir));
         gl_FragColor = vec4(color * pow(k, 2.6) * (0.08 + 1.1 * lit) * boost, 1.0); }`,
   }));
-  const haze = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.035, 48, 32), new THREE.ShaderMaterial({
+  const haze = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.035, 64, 40), new THREE.ShaderMaterial({
     uniforms, vertexShader: ATMO_VERT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     fragmentShader: LOGDEPTH_FRAG + `uniform vec3 color; uniform vec3 sunDir; uniform float boost; varying vec3 vN; varying vec3 vWN; varying vec3 vP;
       void main(){
@@ -344,23 +377,25 @@ function makeRing(look) {
   x.globalAlpha = 1; x.globalCompositeOperation = 'destination-out';
   x.beginPath(); x.arc(R, R, R * inner / outer, 0, Math.PI * 2); x.fill();
   const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-  const geo = new THREE.RingGeometry(look.radius * inner, look.radius * outer, 128, 1);
+  const geo = new THREE.RingGeometry(look.radius * inner, look.radius * outer, 256, 1);
   const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, transparent: true, side: THREE.DoubleSide,
     depthWrite: false, roughness: 1, metalness: 0, emissive: '#FFFFFF', emissiveMap: tex, emissiveIntensity: 0.22 }));
   mesh.rotation.x = -Math.PI / 2 + look.ring.tilt;
   return mesh;
 }
 
-function buildPlanet(p) {
-  const look = makeLook(p.myth), N = makeNoise(look.seed), fr = rng(look.seed + 1);
-  const detail = coarse ? 8 : 11;
+// One surface mesh at a given detail. The same noise at every detail, so all levels show the same seeded planet.
+function surfaceGeometry(look, N, detail) {
   const geo = new THREE.IcosahedronGeometry(1, detail); // non-indexed, so every face can get its own flat color
-  const pos = geo.attributes.position, n = pos.count, hs = new Float32Array(n), v = new THREE.Vector3();
-  const [ox, oy, oz] = look.off, f = look.freq;
+  const pos = geo.attributes.position, n = pos.count, hs = new Float32Array(n), v = new THREE.Vector3(), fr = rng(look.seed + 1);
+  const [ox, oy, oz] = look.off, f = look.freq, cache = new Map();
   for (let i = 0; i < n; i++) {
     v.fromBufferAttribute(pos, i).normalize();
-    hs[i] = N(v.x * f + ox, v.y * f + oy, v.z * f + oz);
-    v.multiplyScalar(look.radius * surfaceHeight(look, hs[i]));
+    // Shared corners appear up to six times; work each one out once.
+    const key = Math.round(v.x * 1e5) * 4e10 + Math.round(v.y * 1e5) * 2e5 + Math.round(v.z * 1e5);
+    let h = cache.get(key); if (h === undefined) { h = N(v.x * f + ox, v.y * f + oy, v.z * f + oz); cache.set(key, h); }
+    hs[i] = h;
+    v.multiplyScalar(look.radius * surfaceHeight(look, h));
     pos.setXYZ(i, v.x, v.y, v.z);
   }
   const colors = new Float32Array(n * 3);
@@ -372,12 +407,48 @@ function buildPlanet(p) {
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
+  return { geo, hs, pos, n };
+}
+// A sphere of cloud above the planet: seeded noise painted onto a canvas (seamless, since it's sampled on the sphere).
+function cloudShell(look, air, radius) {
+  const W = coarse ? 256 : 512, H = W / 2, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), img = g.createImageData(W, H), N = makeNoise(look.seed + 99), cover = air.coverage;
+  for (let y = 0; y < H; y++) {
+    const lat = (y / H - 0.5) * Math.PI, cy = Math.sin(-lat), cr = Math.cos(lat);
+    for (let x = 0; x < W; x++) {
+      const lon = x / W * Math.PI * 2, px = Math.cos(lon) * cr, pz = Math.sin(lon) * cr;
+      const n = N(px * 2.2 + 5, cy * 4.5 + 9, pz * 2.2 + 1, 4) * 0.5 + 0.5;
+      const a = clamp((n - (1 - cover)) / 0.22, 0, 1), o = (y * W + x) * 4;
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = 255; img.data[o + 3] = a * a * 235;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+  const m = new THREE.Mesh(new THREE.SphereGeometry(radius, 96, 48), new THREE.MeshStandardMaterial({ map: tex, color: air.cloudTint,
+    transparent: true, depthWrite: false, side: THREE.FrontSide, roughness: 1, metalness: 0, emissive: air.cloudTint, emissiveIntensity: 0.06 }));
+  m.renderOrder = 1;
+  return m;
+}
+
+function buildPlanet(p) {
+  const look = makeLook(p.myth, p.debt), N = makeNoise(look.seed), fr = rng(look.seed + 1);
+  const air = airProfile(look, rng(look.seed + 5), p.debt ? p.storm : 0);
+  // Level of detail: a coarse ball far away, finer as you come close, and the finest only once you're near.
+  const DETAIL = coarse ? [8, 18, 30] : [10, 24, 44];
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85, metalness: 0 });
+  const mid = surfaceGeometry(look, N, DETAIL[1]);
+  const lod = new THREE.LOD();
+  lod.addLevel(new THREE.Mesh(mid.geo, mat), look.radius * 3.2);
+  lod.addLevel(new THREE.Mesh(surfaceGeometry(look, N, DETAIL[0]).geo, mat), look.radius * 9);
+  // The finest level is built the first time someone comes close (see refineNear), so start-up stays quick.
+  const refine = () => { lod.addLevel(new THREE.Mesh(surfaceGeometry(look, N, DETAIL[2]).geo, mat), 0); lod.levels.sort((a, b) => a.distance - b.distance); };
+  const { hs, pos, n } = mid;
 
   // tilt holds the axis tilt, body spins around it. Moons ride along with the slow spin.
   const tilt = new THREE.Group(), body = new THREE.Group();
   tilt.rotation.z = look.tilt; tilt.add(body);
   body.rotation.y = look.spinPhase;
-  body.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85, metalness: 0 })));
+  body.add(lod);
 
   if (look.biome.crystals) {
     // Chunky crystal spires on the highest ground.
@@ -411,27 +482,38 @@ function buildPlanet(p) {
 
   const group = new THREE.Group();
   group.add(tilt);
-  const atmo = atmosphere(look.biome.atmo, look.radius);
+  // The glow ring sits just outside the cloud tops; the cloud shell turns a little faster than the ground.
+  // (The same heights as airLevels, worked out at the planet's starting size.)
+  const R0 = look.radius * sizeFor(p.progress), deck0 = Math.max(R0 * (air.surf + 0.05), R0 * air.surf + 2 * 9.5 + 6);
+  const cloudR = (deck0 + Math.max(R0 * air.cloud, 35)) / sizeFor(p.progress), clouds = cloudShell(look, air, cloudR);
+  const atmo = atmosphere(look.biome.atmo, look.radius, cloudR / look.radius + 0.06);
   group.add(...atmo.shells);
+  tilt.add(clouds);
   if (look.ring) tilt.add(makeRing(look));
-  return { ...p, look, group, body, glow: atmo.uniforms.boost, size: sizeFor(p.progress), pulse: 0, reach: look.radius * Math.max(look.ring ? look.ring.outer : 1.2, ...look.moons.map(m => m.dist + m.size)) };
+  const airTop = air.surf + 0.05 + air.cloud + air.upper + air.glow;
+  return { ...p, look, air, group, body, clouds, lod, refine, refined: false, glow: atmo.uniforms.boost, size: sizeFor(p.progress), pulse: 0, airGlow: 1,
+    reach: look.radius * Math.max(look.ring ? look.ring.outer : 1.2, airTop, ...look.moons.map(m => m.dist + m.size)) };
 }
 
 // Scatter planets through a big volume: above, below, behind, near and far.
 // Each spot comes from the planet's name. Planets are placed in the order their goals were made, each one only
 // avoiding the ones before it, so adding a goal never moves the planets that are already out there.
-let volume = 200;
-const spreadFor = slot => 110 + 40 * Math.sqrt(slot + 1);
+// Planets are far apart, with big empty space between them (each one's reach includes its air, rings and moons).
+// Debt planets are placed after all the goal planets.
+let volume = 3000;
+const spreadFor = slot => 2600 + 1500 * Math.sqrt(slot + 1);
 function layout(planets) {
-  volume = spreadFor(Math.max(0, ...planets.map(p => p.slot)));
+  const goalMax = Math.max(0, ...planets.filter(p => !p.debt).map(p => p.slot));
+  for (const p of planets) p.spreadSlot = p.debt ? goalMax + 1 + (p.slot - 1000) : p.slot;
+  volume = spreadFor(Math.max(0, ...planets.map(p => p.spreadSlot)));
   const placed = [];
   for (const p of [...planets].sort((a, b) => a.slot - b.slot)) {
     const r = rng(hash(p.myth) + 11), v = new THREE.Vector3();
-    let spread = spreadFor(p.slot);
+    let spread = spreadFor(p.spreadSlot);
     for (let tries = 0; ; tries++) {
-      const th = r() * Math.PI * 2, y = r() * 1.6 - 0.8, d = lerp(40 + p.reach * 1.8, spread, Math.pow(r(), 0.8));
+      const th = r() * Math.PI * 2, y = r() * 1.6 - 0.8, d = lerp(1400 + p.reach * 2, spread, Math.pow(r(), 0.8));
       v.set(Math.cos(th) * Math.sqrt(1 - y * y), y, Math.sin(th) * Math.sqrt(1 - y * y)).multiplyScalar(d);
-      if (placed.every(q => q.group.position.distanceTo(v) > q.reach + p.reach + 25)) break;
+      if (placed.every(q => q.group.position.distanceTo(v) > q.reach + p.reach + 1200)) break;
       if (tries > 40) spread *= 1.03; // crowded: let it drift a little further out
     }
     p.group.position.copy(v);
@@ -441,12 +523,14 @@ function layout(planets) {
 
 // ---------- The player's ship and the chase camera ----------
 const ship = makeShip();
-scene.add(ship.root, ...ship.world);
+universe.add(ship.root); scene.add(...ship.world);   // the trail and tow pod are drawn in render space (see rebase)
 // The emergency fund's guardian fleet: a mothership and its fighters, far from everything.
-const fleet = makeFleet({ planets: () => planets, clearance: p => clearance(p), shipPos: ship.root.position, shipRadius: ship.radius,
+const fleet = makeFleet({ planets: () => planets, clearance: p => autoClear(p), shipPos: ship.root.position, shipRadius: ship.radius,
   volume: () => volume, toast: msg => toast(msg) });
-scene.add(fleet.root);
-const MAX_SPEED = 36, MAX_BACK = 9, MAX_CLIMB = 10, TURN_RATE = 0.9;
+universe.add(fleet.root);
+const airFX = makeAirFX({ universe, camera, shipRadius: ship.radius });
+// Speeds suit the big world: a comfortable top speed, and Shift ramps up to a fast cruise for crossing between planets.
+const MAX_SPEED = 70, MAX_BACK = 15, MAX_CLIMB = 25, TURN_RATE = 0.9, BOOST_MAX = 1500;
 const flight = { yaw: 0, speed: 0, yawVel: 0, climb: 0, accel: 0, turnTo: null };
 // Default view: behind, above and a little to the right of the ship (a back three-quarter view).
 const PITCH_REST = 0.3, YAW_REST = 0.7, FAR = 26;
@@ -621,7 +705,7 @@ function followFleet(dt) {
     camera.position.lerp(fleetPos, reduced ? 1 : 1 - Math.exp(-dt * 4));
     fleetCam.look.lerp(c, reduced ? 1 : 1 - Math.exp(-dt * 4));
   }
-  camera.lookAt(fleetCam.look);
+  camLookAt(fleetCam.look);
 }
 
 // A click (not a drag) on the dashboard screen opens the console.
@@ -668,12 +752,14 @@ cv.addEventListener('wheel', e => {
   zoom(Math.exp(px * 0.0012));
 }, { passive: false });
 
-// Never fly into a planet, and never drift off into nowhere.
-const clearance = p => p.look.radius * p.group.scale.x * 1.12;
-function keepClear(pos, pad, withFleet = true, bounded = true) {
-  for (const p of planets) {
+// Cameras never go below a planet's highest ground; the ship has its own gentle hold at the cloud deck (see holdAtDeck).
+// The autopilot and the fighters keep well outside the air (autoClear). Nothing drifts off into nowhere.
+const surfaceClear = p => airLevels(p, ship.radius).surf;
+const autoClear = p => { const L = airLevels(p, ship.radius); return L.upperTop + L.R * 0.2; };
+function keepClear(pos, pad, withFleet = true, bounded = true, withPlanets = true) {
+  if (withPlanets) for (const p of planets) {
     tmpV.copy(pos).sub(p.group.position);
-    const min = clearance(p) + pad;
+    const min = surfaceClear(p) + pad;
     if (tmpV.length() < min) pos.copy(p.group.position).addScaledVector(tmpV.normalize(), min); // slide along it
   }
   if (withFleet) fleet.keepClear(pos, pad);   // and never into the guardian mothership
@@ -683,7 +769,7 @@ function keepClear(pos, pad, withFleet = true, bounded = true) {
 const camReach = () => Math.max(volume * 1.5, fleet.reach);
 
 // ---------- Autopilot: when nobody is steering, cruise between waypoints, hover a while, and go somewhere new ----------
-const AUTO_AFTER = 3, CRUISE = 15, ARRIVE = 5;
+const AUTO_AFTER = 3, CRUISE = 30, ARRIVE = 30;
 const auto = { idle: 0, active: false, target: null, state: 'pick', hover: 0, travel: 0, heading: null, askedCrew: false };
 // Distance from point c to the segment a-b.
 function segDist(a, b, c) {
@@ -692,27 +778,32 @@ function segDist(a, b, c) {
 }
 function pickWaypoint() {
   const pos = ship.root.position, margin = ship.radius + 10;
+  // Left inside a planet's air by the pilot? Climb straight back out first.
+  for (const p of planets) {
+    const rel = pos.clone().sub(p.group.position), c = autoClear(p);
+    if (rel.length() < c) { auto.heading = rel.clone().normalize(); return p.group.position.clone().addScaledVector(auto.heading, c + 250); }
+  }
   for (let tries = 0; tries < 60; tries++) {
     let cand;
     if (planets.length && Math.random() < 0.3) {
       // Cruise past a planet, keeping a comfortable distance.
       const p = planets[Math.floor(Math.random() * planets.length)], a = Math.random() * Math.PI * 2;
-      cand = p.group.position.clone().add(new THREE.Vector3(Math.cos(a), (Math.random() - 0.5) * 0.4, Math.sin(a)).normalize().multiplyScalar(clearance(p) + margin + 12 + Math.random() * 15));
+      cand = p.group.position.clone().add(new THREE.Vector3(Math.cos(a), (Math.random() - 0.5) * 0.4, Math.sin(a)).normalize().multiplyScalar(autoClear(p) + margin + 100 + Math.random() * 400));
     } else {
       // A clearly different direction from the last trip, a good distance away.
-      const turn = (Math.random() < 0.5 ? -1 : 1) * (1.0 + Math.random() * 1.6), yaw = flight.yaw + turn, d = 60 + Math.random() * 80;
+      const turn = (Math.random() < 0.5 ? -1 : 1) * (1.0 + Math.random() * 1.6), yaw = flight.yaw + turn, d = 600 + Math.random() * 2400;
       cand = pos.clone().add(new THREE.Vector3(-Math.sin(yaw), (Math.random() - 0.5) * 0.35, -Math.cos(yaw)).multiplyScalar(d));
     }
-    if (cand.length() > volume * 1.25 || cand.distanceTo(pos) < 40) continue;
+    if (cand.length() > volume * 1.25 || cand.distanceTo(pos) < 300) continue;
     const dir = cand.clone().sub(pos).normalize();
     if (auto.heading && dir.dot(auto.heading) > 0.65) continue; // not the same way again
-    if (planets.some(p => segDist(pos, cand, p.group.position) < clearance(p) + margin)) continue;
+    if (planets.some(p => segDist(pos, cand, p.group.position) < autoClear(p) + margin)) continue;
     if (fleet.blocks(pos, cand, margin)) continue;
     auto.heading = dir;
     return cand;
   }
   // Nothing good nearby (crowded or near the edge): head back toward the middle.
-  const back = pos.clone().multiplyScalar(-1).setLength(60).add(pos);
+  const back = pos.clone().multiplyScalar(-1).setLength(600).add(pos);
   auto.heading = back.clone().sub(pos).normalize();
   return back;
 }
@@ -725,12 +816,13 @@ function autopilot(dt) {
     const to = auto.target.clone().sub(pos), dist = to.length();
     const diff = wrapAngle(Math.atan2(-to.x, -to.z) - flight.yaw);
     // Slow right down for big turns (so it turns in place instead of looping), and ease in when arriving.
-    const align = Math.max(0, Math.cos(diff)) ** 3;
-    const speed = CRUISE * align * clamp(dist / 35, 0.12, 1);
-    if (dist < ARRIVE || auto.travel > 45) {
+    const align = Math.max(0, Math.cos(diff)) ** 2;
+    // Long legs are flown fast and the last stretch slowly, so trips between far planets don't drag.
+    const speed = clamp(dist * 0.22, 20, 600) * align;
+    if (dist < ARRIVE || auto.travel > 150) {
       auto.state = 'hover'; auto.hover = 5 + Math.random() * 4; auto.askedCrew = false;
     }
-    return { speed, turn: clamp(diff * 1.6, -1, 1), climb: clamp(to.y / 12, -1, 1), cruising: true };
+    return { speed, turn: clamp(diff * 1.1, -1, 1), climb: clamp(to.y / Math.max(12, dist * 0.15), -1, 1), cruising: true };
   }
   // Hover: a few seconds, or as long as the pilot is busy with something. Sometimes the pilot gets up for a while.
   auto.hover -= dt;
@@ -746,10 +838,10 @@ function fly(dt) {
   let ahead = live ? on('fwd') - on('back') : 0, turnIn = live ? on('left') - on('right') : 0, climbIn = live ? on('up') - on('down') : 0;
   const outside = view.mode === 'outside';
   const steering = (on('fwd') || on('back') || on('left') || on('right') || on('up') || on('down')) > 0 && outside;
-  const boost = live && on('boost') ? 1.8 : 1;   // Shift: a faster top speed and a harder push   // keys pressed while inside wait until the camera is back out
+  const boosting = live && on('boost') && ahead > 0;   // Shift + forward: ramp up to a fast cruise for crossing between planets
   // Any key takes over at once; letting go hands back to the autopilot after a few quiet seconds.
   auto.idle = steering || flight.turnTo !== null ? 0 : auto.idle + dt;
-  if (on('boost') && live && ahead > 0) thrustBoost = 1; else thrustBoost = 0;
+  if (boosting) thrustBoost = 1; else thrustBoost = 0;
   if (steering) { auto.active = false; auto.state = 'pick'; auto.heading = null; }
   else if (!auto.active && auto.idle > AUTO_AFTER && !reduced && outside) auto.active = true;
   if (reduced || !outside) auto.active = false;   // inside, the ship stays put
@@ -761,14 +853,18 @@ function fly(dt) {
   if (auto.active) {
     const a = autopilot(dt);
     cruising = a.cruising;
-    const want = a.speed * limit, rate = want > flight.speed ? 5 : 7;
+    const want = Math.min(a.speed * limit, air.maxSpeed), rate = Math.max(want > flight.speed ? 5 : 7, flight.speed * 0.6);
     flight.speed += clamp(want - flight.speed, -rate * dt, rate * dt);
     turnIn = a.turn; climbIn = a.climb;
     thrust = want > flight.speed + 0.5 ? 0.9 : flight.speed > 2 ? 0.35 : 0;
-  } else if (ahead > 0) flight.speed = Math.min(MAX_SPEED * limit * boost, flight.speed + (flight.speed < 0 ? 24 : (12 + 6 * Math.max(0, 1 - flight.speed / MAX_SPEED)) * boost) * dt);
-  else if (flight.speed > MAX_SPEED * limit * boost) flight.speed = Math.max(MAX_SPEED * limit * boost, flight.speed - 9 * dt); // ease down after a boost
+  } else if (boosting) flight.speed = Math.min(BOOST_MAX * limit, flight.speed + (40 + Math.max(0, flight.speed) * 1.3) * dt);
+  else if (ahead > 0 && flight.speed > MAX_SPEED * limit) flight.speed = Math.max(MAX_SPEED * limit, flight.speed - (30 + flight.speed * 1.4) * dt); // ease down after a boost
+  else if (ahead > 0) flight.speed = Math.min(MAX_SPEED * limit, flight.speed + (flight.speed < 0 ? 40 : 18 + 10 * Math.max(0, 1 - flight.speed / MAX_SPEED)) * dt);
+  else if (flight.speed > MAX_SPEED) flight.speed = Math.max(0, flight.speed - (30 + flight.speed * 1.4) * dt);
   else if (ahead < 0) flight.speed = Math.max(-MAX_BACK, flight.speed - (flight.speed > 0 ? 24 : 7) * dt);
   else { flight.speed *= Math.exp(-dt * 1.1); if (Math.abs(flight.speed) < 0.02) flight.speed = 0; }
+  // Thicker air slows the ship, so it always arrives at the cloud deck gently.
+  if (flight.speed > air.maxSpeed) flight.speed += (air.maxSpeed - flight.speed) * (1 - Math.exp(-dt * 2.5));
   flight.accel = (flight.speed - before) / Math.max(dt, 1e-4);
   let want = turnIn * TURN_RATE * (ship.atControls ? 1 : 0.5);
   if (flight.turnTo !== null && !steering) {
@@ -783,11 +879,30 @@ function fly(dt) {
   fwd.set(-Math.sin(flight.yaw), 0, -Math.cos(flight.yaw));
   ship.root.position.addScaledVector(fwd, flight.speed * dt);
   ship.root.position.y += flight.climb * dt;
-  keepClear(ship.root.position, ship.radius + 2);
+  keepClear(ship.root.position, ship.radius + 2, true, true, false);
+  holdAtDeck(dt);
+  if (Math.abs(flight.speed) > 3) thrust = Math.min(1.25, thrust + air.flare);   // the engine flares a little in thin air
   ship.update(dt, { thrust, flying: steering, cruising: cruising || (auto.active && Math.abs(flight.speed) > 1), stopped: Math.abs(flight.speed) < 1,
     visible: shipOnScreen(), turn: clamp(flight.yawVel / TURN_RATE, -1, 1), turnVel: flight.yawVel,
     accel: flight.accel, speedFrac: Math.min(1, Math.abs(flight.speed) / CRUISE), climb: flight.climb / MAX_CLIMB, reduced });
 }
+
+// The surface doesn't exist yet, so the ship is held at the bottom of the cloud layer: a soft spring that eases it back
+// up, with a hard floor well above the highest ground so it can never touch or pass through the planet.
+function holdAtDeck(dt) {
+  for (const p of planets) {
+    const L = airLevels(p, ship.radius), rel = tmpV.copy(ship.root.position).sub(p.group.position), d = rel.length();
+    if (d >= L.deck) continue;
+    // HOOK (Phase E): the descent to the surface plugs in here. When it exists, call descendToSurface(p) instead of
+    // holding the ship at the deck (and let the layer line offer it).
+    const nd = Math.max(d + (L.deck - d) * (1 - Math.exp(-dt * 6)), L.surf + ship.radius + 6);
+    ship.root.position.copy(p.group.position).addScaledVector(rel.normalize(), nd);
+    flight.climb *= Math.exp(-dt * 4);
+  }
+}
+// Placeholder for Phase E (landing). Not called yet.
+// eslint-disable-next-line no-unused-vars
+function descendToSurface(planet) { /* Phase E: descend through the clouds to the planet's surface. */ }
 
 // Outside: third person, behind, above and a little to the side, following with a slight lag and easing back after a drag.
 // Inside: the ship holds still and the camera orbits its centre with no ease-back. It never comes closer than the ship's
@@ -807,7 +922,7 @@ function follow(dt) {
     free.pos.addScaledVector(camDir, (f('fwd') - f('back')) * sp);
     free.pos.x += Math.cos(free.yaw) * (f('right') - f('left')) * sp; free.pos.z -= Math.sin(free.yaw) * (f('right') - f('left')) * sp;
     free.pos.y += (f('up') - f('down')) * sp;
-    keepClear(free.pos, 0.5, true, false);                        // never inside a planet or the mothership's hull
+    keepClear(free.pos, 0.5, true, false);                        // never below a planet's ground or inside the mothership's hull
     if (free.pos.length() > camReach()) free.pos.setLength(camReach());   // never lost in the void
     camera.position.copy(free.pos); camera.rotation.set(free.pitch, free.yaw, 0, 'YXZ');
     // The cut stays on one side; it only moves to the other side once the camera is well clear of the hull over there.
@@ -847,8 +962,8 @@ function follow(dt) {
   desired.multiplyScalar(chase.dist).add(pivot);
   keepClear(desired, 1.5);
   if (!chase.ready || reduced) { camera.position.copy(desired); chase.ready = true; }
-  else camera.position.lerp(desired, 1 - Math.exp(-dt * (view.mode === 'outside' ? 5 : 12)));
-  camera.lookAt(tmpV.copy(pivot).addScaledVector(fwd, 1.5 * Math.cos(chase.yaw) * look));
+  else camera.position.lerp(desired, 1 - Math.exp(-dt * (view.mode === 'outside' ? 5 + Math.abs(flight.speed) / 12 : 12)));
+  camLookAt(tmpV.copy(pivot).addScaledVector(fwd, 1.5 * Math.cos(chase.yaw) * look));
   ship.setView(camera);
 }
 // While the camera is inside, the ship hovers in place and the pilot keeps living their life.
@@ -865,7 +980,7 @@ const frustum = new THREE.Frustum(), projView = new THREE.Matrix4(), shipSphere 
 function shipOnScreen() {
   camera.updateMatrixWorld();
   frustum.setFromProjectionMatrix(projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
-  return frustum.intersectsSphere(shipSphere.set(ship.root.position, ship.radius));
+  return frustum.intersectsSphere(shipSphere.set(ship.root.getWorldPosition(shipSphere.center), ship.radius));
 }
 
 // "Show in space" from the console: the ship turns to face that planet (the autopilot waits until it has).
@@ -889,7 +1004,7 @@ function viewSpots(p, perps = [SIDE, SIDE.clone().negate(), UP2, UP2.clone().neg
 // ---------- Building the world ----------
 let planets = [];
 const world = new THREE.Group();
-scene.add(world);
+universe.add(world);
 const stars = makeStars();
 sky.add(stars, makeSun());
 scene.background = bakeNebula();
@@ -914,10 +1029,7 @@ function loadPlanets(first) {
   const before = volume;
   layout(planets);
   for (const p of planets) if (!p.group.parent) { p.group.scale.setScalar(p.size); world.add(p.group); }
-  if (!dust || before !== volume) {
-    if (dust) { world.remove(dust); disposeTree(dust); }
-    dust = makeDust(volume * 1.3); world.add(dust);
-  }
+  if (!dust) { dust = makeDust(); world.add(dust); }
   document.getElementById('banner').hidden = !examples;
   cv.setAttribute('aria-label', `Space view with your ship and ${planets.length} ${examples ? 'example ' : ''}planet${planets.length === 1 ? '' : 's'}. The ship flies itself when you're not steering. Fly with W, A, S, D or the arrow keys. Drag to look around the ship, scroll to zoom in and see inside.`);
   if (first) {
@@ -1000,7 +1112,7 @@ thumbScene.background = new THREE.Color('#0B1228');
 thumbScene.add(new THREE.HemisphereLight('#3A4C8C', '#2A1C44', 0.2));
 const thumbSun = new THREE.DirectionalLight('#FFF1DC', 3.2);
 thumbSun.position.copy(SUN_DIR); thumbScene.add(thumbSun);
-const thumbCam = new THREE.PerspectiveCamera(30, THUMB_W / THUMB_H, 0.5, 2000);
+const thumbCam = new THREE.PerspectiveCamera(30, THUMB_W / THUMB_H, 1, 60000);
 const thumbCanvas = Object.assign(document.createElement('canvas'), { width: THUMB_W, height: THUMB_H });
 const thumbQueue = [], thumbUrls = new Map();
 function photograph(p) {
@@ -1030,26 +1142,55 @@ function photograph(p) {
 
 // ---------- Frame loop ----------
 const clock = new THREE.Clock();
-let elapsed = 0;
+let elapsed = 0, rebases = 0;
+// Keep the dust in a box around the camera: specks that leave it come back in on the other side.
+function wrapDust() {
+  const a = dust.geometry.attributes.position, h = DUST_BOX / 2, c = camera.position;
+  for (let i = 0; i < a.count; i++) for (let k = 0; k < 3; k++) {
+    const o = i * 3 + k, cc = k === 0 ? c.x : k === 1 ? c.y : c.z; let v = a.array[o] - cc;
+    if (v > h || v < -h) { v = ((v + h) % DUST_BOX + DUST_BOX) % DUST_BOX - h; a.array[o] = cc + v; }
+  }
+  a.needsUpdate = true;
+}
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (dialogOpen()) keys.clear(); // no flying while the console is open
   fly(dt);
   try { fleet.update(dt, { camera, reduced }); } catch (e) { console.error(e); }   // a fleet hiccup must never stop the whole scene
   follow(dt);
-  // Planets grow toward their size, and glow softly for a moment after their goal changes.
+  air = airFX.update(dt, { planets, shipPos: ship.root.position, reduced, speed: Math.abs(flight.speed), following: !fleetView() && view.mode !== 'free' });
+  // In the clouds: a soft shake and a faint shimmer (both zero with reduced motion), only for the follow camera.
+  const fov = view.mode === 'outside' ? baseFov + air.fov : baseFov;
+  if (view.mode === 'outside') camera.position.add(air.shake);
+  if (Math.abs(camera.fov - fov) > 1e-3) { camera.fov = fov; camera.updateProjectionMatrix(); }
+  // Planets grow toward their size, glow brighter as you approach their air, and pulse for a moment when their goal changes.
   for (const p of planets) {
     const target = sizeFor(p.progress), s = p.group.scale.x;
     if (Math.abs(target - s) > 1e-4) p.group.scale.setScalar(reduced ? target : s + (target - s) * (1 - Math.exp(-dt * 2.5)));
-    if (p.pulse > 0) { p.pulse = reduced ? 0 : Math.max(0, p.pulse - dt / 2.2); p.glow.value = 1 + Math.sin(p.pulse * Math.PI) * 1.4; }
+    if (p.pulse > 0) p.pulse = reduced ? 0 : Math.max(0, p.pulse - dt / 2.2);
+    p.glow.value = p.airGlow * (1 + Math.sin(p.pulse * Math.PI) * 1.4);
+    // Clouds are seen from outside, or from underneath once the camera is inside them (never their far inner side through the gaps).
+    const camD = camera.position.distanceTo(p.group.position), inside = camD < p.clouds.geometry.parameters.radius * p.group.scale.x;
+    p.clouds.material.side = inside ? THREE.BackSide : THREE.FrontSide;
+    // The finest surface is built the first time the camera comes close.
+    if (!p.refined && camera.position.distanceTo(p.group.position) < p.look.radius * 4.5) { p.refined = true; p.refine(); }
   }
   if (!reduced) {
     elapsed += dt;
-    for (const p of planets) p.body.rotation.y = p.look.spinPhase + elapsed * p.look.spin;
+    for (const p of planets) { p.body.rotation.y = p.look.spinPhase + elapsed * p.look.spin; p.clouds.rotation.y = elapsed * p.look.spin * 1.35; }
   }
   if (thumbQueue.length) photograph(thumbQueue.shift());
-  sky.position.copy(camera.position);
+  wrapDust();
+  // Floating origin: once the camera is 2,000 units from the render origin, move the origin to the camera.
+  if (camera.position.distanceTo(origin) > 2000) {
+    const delta = camera.position.clone().sub(origin);
+    origin.copy(camera.position); universe.position.copy(origin).negate();
+    ship.rebase(delta); rebases++;
+  }
+  universe.updateMatrixWorld();
+  sky.position.copy(camera.getWorldPosition(camWorld));
   stars.material.uniforms.pr.value = renderer.getPixelRatio();
+  stars.material.uniforms.fade.value = air.starFade;
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }

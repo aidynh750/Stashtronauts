@@ -45,3 +45,10 @@ button:focus-visible,canvas:focus-visible,a:focus-visible,input:focus-visible,se
   border-radius:999px;padding:8px 18px;font-weight:800;box-shadow:0 0 22px rgba(127,224,194,.3);backdrop-filter:blur(6px)}
 .toast[hidden]{display:none}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+
+/* Flying into a planet's air: a faint sky-coloured wash over the view, and a small line naming the layer. */
+.sky-tint{position:fixed;inset:0;pointer-events:none;opacity:0;transition:background-color 1.2s}
+.layer-line{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);margin:0;
+  background:rgba(20,28,52,.6);border:1px solid var(--line);border-radius:999px;padding:5px 14px;font-size:.85rem;font-weight:700;
+  color:var(--ink);backdrop-filter:blur(6px);pointer-events:none;white-space:nowrap}
+.layer-line[hidden]{display:none}

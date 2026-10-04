@@ -8,12 +8,12 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { armorTexture, windowRowsTexture, deckTexture, fleetDecalTexture, serialTexture, rackTexture, consoleGlowTexture, softGlowTexture, dotTexture } from './textures.js';
 
 export const MAX_ACTIVE = 24;
-// Sizes are multiples of the player's ship length. (When planets are scaled up later, these must be revisited: see CLAUDE.md.)
+// Sizes are multiples of the player's ship length (18.4). The carrier is about as long as the largest planet is wide.
 export const SHIP_LEN = 18.4;
 export const TIERS = {
-  frigate: { label: 'Patrol frigate', mult: 15, slots: 6, segs: 3, engines: [2, 3], towers: 4, turrets: 4, officers: 3, arms: 2, dishes: 3, antennas: 60, city: 0, serial: 'GP-104', seed: 11 },
-  cruiser: { label: 'Cruiser', mult: 40, slots: 10, segs: 5, engines: [3, 4], towers: 8, turrets: 8, officers: 4, arms: 4, dishes: 5, antennas: 220, city: 220, serial: 'GC-311', seed: 23 },
-  carrier: { label: 'Flagship carrier', mult: 120, slots: 16, segs: 8, engines: [4, 6], towers: 14, turrets: 12, officers: 6, arms: 6, dishes: 8, antennas: 700, city: 1600, serial: 'GF-001', seed: 37 },
+  frigate: { label: 'Patrol frigate', mult: 4, slots: 6, segs: 3, engines: [2, 3], towers: 4, turrets: 4, officers: 3, arms: 2, dishes: 3, antennas: 60, city: 0, serial: 'GP-104', seed: 11 },
+  cruiser: { label: 'Cruiser', mult: 10.7, slots: 10, segs: 5, engines: [3, 4], towers: 8, turrets: 8, officers: 4, arms: 4, dishes: 5, antennas: 220, city: 220, serial: 'GC-311', seed: 23 },
+  carrier: { label: 'Flagship carrier', mult: 32, slots: 16, segs: 8, engines: [4, 6], towers: 14, turrets: 12, officers: 6, arms: 6, dishes: 8, antennas: 700, city: 1600, serial: 'GF-001', seed: 37 },
 };
 for (const t of Object.values(TIERS)) t.L = t.mult * SHIP_LEN;
 export const tierFor = (amount, months) => !(amount > 0) ? null : months < 3 ? 'frigate' : months < 6 ? 'cruiser' : 'carrier';
@@ -239,7 +239,8 @@ const upLoft = (rings, x, z, o) => octLoft(rings.map(r => ({ z: r.y, w: r.w, h: 
 const seeded = seed => { let s = seed; return () => hashN(s++ * 7919 + 13); };
 
 function buildMothership(key) {
-  const t = TIERS[key], L = t.L, W = L * 0.17, H = L * 0.075, k = L / 60, tx = textures(), rnd = seeded(t.seed);
+  // Small ships get a chunkier body, so the fighter-sized bay still fits inside the hull's outline.
+  const t = TIERS[key], L = t.L, W = Math.max(L * 0.17, 17), H = Math.max(L * 0.075, 11), k = L / 60, tx = textures(), rnd = seeded(t.seed);
   const HD = 10, HH = 6, FD = HD + 3, slots = t.slots;
   const mats = shipMaterials(tx, key);
   const B = batch(), Bd = batch(), Bb = batch(), put = B.put, putD = Bd.put, putB = Bb.put;
@@ -866,7 +867,7 @@ export function makeFleet(opts) {
     ms = key ? built(key) : null;
     if (old && old !== ms) { fading = old; fading.t = 1; }
     if (ms) {
-      spdK = 1 + ms.D.L / 800;
+      spdK = (1 + ms.D.L / 800) * Math.sqrt(Math.max(1, opts.volume() / 300));   // a bigger world needs faster patrols
       if (station.set && !first) {
         const before = station.pos.clone(), r = shellR();
         if (Math.abs(before.length() - r) > r * 0.1) {
