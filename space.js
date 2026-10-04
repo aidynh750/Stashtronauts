@@ -232,9 +232,11 @@ function drawLabels() {
     ctx.shadowColor = 'rgba(0,0,0,0.7)'; ctx.shadowBlur = 6;
     ctx.fillStyle = '#EEF3FF'; ctx.font = '800 16px Nunito, system-ui, sans-serif';
     ctx.fillText(p.myth, s.x, s.y);
-    if (cam.zoom > 0.3) {
+    if (cam.zoom > 0.2) {
+      const text = `${p.label} · ${Math.round(progress(p) * 100)}%`;
       ctx.fillStyle = '#A9B5D6'; ctx.font = '600 14px Nunito, system-ui, sans-serif';
-      ctx.fillText(`${p.label} · ${Math.round(progress(p) * 100)}%`, s.x, s.y + 20);
+      const half = ctx.measureText(text).width / 2 + 8; // nudge inward so it never runs off the screen edge
+      ctx.fillText(text, half * 2 < W ? clamp(s.x, half, W - half) : s.x, s.y + 20);
     }
     ctx.shadowBlur = 0;
   }
@@ -452,11 +454,13 @@ document.getElementById('home').onclick = () => showAll();
 function showAll(instant) {
   hideCard();
   if (!planets.length) return flyCamera(0, 0, 1);
-  const pad = 170, xs = planets.map(p => p.x), ys = planets.map(p => p.y);
-  const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad, minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad + 90;
-  // Leave room for the title bar and banner at the top of the screen.
-  const top = usingExamples ? 110 : 64, zoom = clamp(Math.min(W / (maxX - minX), (H - top) / (maxY - minY)), MIN_ZOOM, 1.1);
-  flyCamera((minX + maxX) / 2, (minY + maxY) / 2 - top / 2 / zoom, zoom);
+  const pad = 150, xs = planets.map(p => p.x), ys = planets.map(p => p.y);
+  const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad, minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
+  // Labels stay the same size on screen, so keep screen space for them at the sides and bottom,
+  // and leave room for the title bar and banner at the top.
+  const top = usingExamples ? 110 : 64, side = 70, bottom = 60;
+  const zoom = clamp(Math.min((W - side * 2) / (maxX - minX), (H - top - bottom) / (maxY - minY)), MIN_ZOOM, 1.1);
+  flyCamera((minX + maxX) / 2, (minY + maxY) / 2 - (top - bottom) / 2 / zoom, zoom);
   if (instant) { Object.assign(cam, glide); glide = null; }
 }
 function onHover(sx, sy) {
