@@ -72,3 +72,25 @@ export function planetNames(goals) {
   if (changed) try { localStorage.setItem(NAMES_KEY, JSON.stringify(names)); } catch (e) {}
   return names;
 }
+
+// ---------- What the ship shows ----------
+// A goal counts as the emergency fund when its name says so, like "Emergency fund" or "Rainy-day fund".
+export const isEmergencyFund = g => /emergenc|rainy|safety net|cushion|backup/i.test(g.name || '');
+// A rough monthly cost of living, from spending limits and minimum debt payments.
+// With nothing to go on, assume $2,000 a month so the shield still means something.
+export function monthlyCosts(S) {
+  const m = sum(limitsOf(S), 'target') + sum(S.debts, 'min');
+  return m > 0 ? m : 2000;
+}
+// Everything the ship needs to know, in one small object.
+export function shipMoney(S) {
+  const goals = goalsOf(S), fund = goals.find(isEmergencyFund);
+  return {
+    totalSaved: sum(goals, 'amount'),
+    goals: goals.map(g => ({ id: g.id, name: g.name, progress: Math.max(0, Math.min(1, (+g.amount || 0) / (+g.target || 1))) })),
+    emergencyMonths: fund ? (+fund.amount || 0) / monthlyCosts(S) : 0,
+    hasEmergencyFund: !!fund,
+    debt: sum(S.debts, 'balance'),
+    towPod: !!S.ship?.towPod,
+  };
+}

@@ -21,3 +21,5 @@ button:focus-visible,canvas:focus-visible,a:focus-visible,input:focus-visible,se
 .banner{position:fixed;top:calc(60px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);margin:0;max-width:calc(100% - 32px);
   background:var(--panel);border:1.5px solid var(--line);border-radius:14px;padding:8px 14px;font-size:.92rem;text-align:center;backdrop-filter:blur(6px)}
 .banner .link{background:none;border:0;padding:0;color:var(--accent);font-weight:800;text-decoration:underline;font-size:inherit}
+
+.hud-row{display:flex;gap:10px}

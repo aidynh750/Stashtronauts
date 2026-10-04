@@ -59,7 +59,9 @@ function close() {
   dlg.addEventListener('animationend', done, { once: true });
   setTimeout(done, 400); // in case the animation never runs
 }
-opener.addEventListener('click', () => open());
+opener.addEventListener('click', () => { open(); if (isEmpty(S)) openFlow('setup'); });
+// The dashboard screen in the ship opens the console too, but only when the player clicks it (see space.js).
+addEventListener('stash:console', () => opener.click());
 document.addEventListener('click', e => {
   if (!e.target.closest('[data-open=setup]')) return;
   open('planets'); openFlow(goals().length ? 'goal' : 'setup');
@@ -251,7 +253,9 @@ function vShip() {
       <label class="field" for="shipName"><span>Ship name</span></label>
       <input id="shipName" data-f="ship-name" data-k="ship-name" maxlength="28" placeholder="${DEFAULT_SHIP}" value="${esc(S.ship.name || '')}">
       <label class="field" for="pilotName"><span>What should we call you?</span></label>
-      <input id="pilotName" data-f="ship-pilot" data-k="ship-pilot" maxlength="28" placeholder="Pilot" value="${esc(S.ship.pilot || '')}"></div>
+      <input id="pilotName" data-f="ship-pilot" data-k="ship-pilot" maxlength="28" placeholder="Pilot" value="${esc(S.ship.pilot || '')}">
+      <label class="toggle" for="towPod"><input type="checkbox" id="towPod" data-f="ship-tow" data-k="ship-tow" ${S.ship.towPod ? 'checked' : ''}>
+        <span><b>Tow a debt pod behind my ship</b><small>A little pod on a line that shrinks as you pay down what you owe. Off unless you want it.</small></span></label></div>
     <div class="panelbox"><h4>Your data stays here</h4>
       <p class="note">No account and no bank connection. Everything is saved in this browser, on this computer only.</p>
       <p style="margin:14px 0 0">${isEmpty(S)
@@ -466,6 +470,7 @@ panel.addEventListener('change', e => {
   if (!f) return;
   if (f === 'ship-name') S.ship.name = i.value.trim();
   else if (f === 'ship-pilot') S.ship.pilot = i.value.trim();
+  else if (f === 'ship-tow') S.ship.towPod = i.checked;
   else {
     const v = Math.max(0, parseFloat(i.value) || 0);
     if (f === 'extra') S.extra = v; else { const x = find(i.dataset.id); if (x) x[f] = v; }
@@ -474,5 +479,5 @@ panel.addEventListener('change', e => {
   setTimeout(() => render(), 0);
 });
 
-// ---------- First visit ----------
-if (isEmpty(S)) { open('home'); openFlow('setup'); }
+// The console never opens on its own (not on first visit, and never from anything the pilot does).
+// It opens only from the Console button, the banner link, or a click on the dashboard screen.

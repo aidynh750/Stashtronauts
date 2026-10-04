@@ -31,7 +31,7 @@ Round, expressive and built from layered parts (body, eyes, mouth, hair or hat, 
 
 ## Motion
 - Ease in and out. Things speed up gently and slow down to land.
-- Keep it calm: right now only the planets' slow spin and the camera move.
+- Keep it calm: nothing in space moves on its own except the planets' slow spin. The ship moves only when you fly it, and its flame and trail show only while thrusting.
 - **Respect `prefers-reduced-motion`.** When it is on, planets stop spinning and the camera moves in steps instead of gliding.
 
 ## Tone

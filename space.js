@@ -1,8 +1,10 @@
 // Stashtronauts space view, in 3D with three.js.
-// You sit inside the scene: drag to look around, scroll or pinch to fly forward and back.
+// You fly a small ship with W/A/S/D or the arrow keys. The camera follows behind; drag to look around the ship, scroll to zoom.
 // Everything is built in code. Nothing is sent to a server.
 import * as THREE from 'three';
-import { load, goalsOf, planetNames, KEY, NAMES_KEY } from './money.js';
+import { load, goalsOf, planetNames, shipMoney, KEY, NAMES_KEY } from './money.js';
+import { makeShip } from './ship.js';
+import { MOODS } from './pilot.js';
 
 const cv = document.getElementById('space');
 cv.tabIndex = 0;
@@ -10,7 +12,7 @@ cv.tabIndex = 0;
 // People can ask their device for less motion. We check once and also listen for changes.
 const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
 let reduced = motionQuery.matches;
-motionQuery.addEventListener('change', e => { reduced = e.matches; dirty = true; });
+motionQuery.addEventListener('change', e => { reduced = e.matches; });
 
 // ---------- Small helpers ----------
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -47,8 +49,9 @@ function makeNoise(seed) {
 const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, powerPreference: 'high-performance' });
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
+renderer.localClippingEnabled = true; // for the ship's dollhouse cutaway
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 6000);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.2, 6000);
 const coarse = matchMedia('(pointer: coarse)').matches; // phones and tablets get fewer pixels to draw
 
 function resize() {
@@ -59,7 +62,6 @@ function resize() {
   const minWide = THREE.MathUtils.degToRad(64);
   camera.fov = Math.min(95, Math.max(60, THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(minWide / 2) / camera.aspect))));
   camera.updateProjectionMatrix();
-  dirty = true;
 }
 
 // ---------- Light ----------
@@ -212,22 +214,22 @@ function makeDust(radius) {
 // ---------- Planets from the saved goals ----------
 // progress is how much of the goal is saved, 0 to 1. Planets grow as it fills up.
 const EXAMPLES = [
-  { id: 'ex1', myth: 'Elysium', label: 'Car fund', progress: 0.41 },
-  { id: 'ex2', myth: 'Atlas', label: 'Emergency fund', progress: 0.62 },
-  { id: 'ex3', myth: 'Calypso', label: 'Trip to Japan', progress: 0.2 },
-  { id: 'ex4', myth: 'Vesta', label: 'New laptop', progress: 1 },
-  { id: 'ex5', myth: 'Hyperion', label: 'House deposit', progress: 0.3 },
-].map((p, slot) => ({ ...p, slot }));
+  { id: 'ex1', myth: 'Elysium', label: 'Car fund', amount: 6200, target: 15000 },
+  { id: 'ex2', myth: 'Atlas', label: 'Emergency fund', amount: 3100, target: 5000 },
+  { id: 'ex3', myth: 'Calypso', label: 'Trip to Japan', amount: 800, target: 4000 },
+  { id: 'ex4', myth: 'Vesta', label: 'New laptop', amount: 1200, target: 1200 },
+  { id: 'ex5', myth: 'Hyperion', label: 'House deposit', amount: 9000, target: 30000 },
+].map((p, slot) => ({ ...p, slot, progress: p.amount / p.target }));
 
 // Biomes are calm, chunky color sets from docs/STYLE.md. A planet's name decides which one it gets.
 // kind decides the surface: 'terra' has seas and stepped land, 'mesa' is stepped rock, 'bands' is a striped giant.
 const BIOMES = [
-  { name: 'meadow', kind: 'terra', sea: -0.05, water: ['#2D6EA6', '#4FA3D9'], land: ['#E6D49A', '#73C47A', '#4FA56A', '#3E8C5E', '#DCE9A0'], cap: '#F2F7F0', atmo: '#9FE8C0' },
-  { name: 'ocean', kind: 'terra', sea: 0.28, water: ['#235C93', '#3A85C2'], land: ['#F3E1AE', '#83CBA0', '#5BAF7A', '#EAF3D6'], cap: '#EAF3FB', atmo: '#8CCBFF' },
-  { name: 'dune', kind: 'mesa', land: ['#B9783F', '#CC8A4D', '#E6B36A', '#F3CE8C', '#F8E3B6'], atmo: '#FFD8A0' },
-  { name: 'frost', kind: 'terra', sea: 0.05, water: ['#5C86B8', '#88AFCB'], land: ['#CFE6F2', '#E6F4FB', '#FFFFFF', '#A3C8DE'], cap: '#FFFFFF', atmo: '#D6F0FF' },
-  { name: 'coral', kind: 'bands', land: ['#EE9A98', '#FFC4B6', '#D47586', '#FFE2CB', '#B9607A', '#F6B39C'], atmo: '#FFC2CC' },
-  { name: 'crystal', kind: 'mesa', land: ['#5F4FAE', '#7764C4', '#9C8BE0', '#C6B8F5', '#F0E7FF'], atmo: '#CFC2FF', crystals: '#B8F1FF' },
+  { name: 'meadow', tint: '#73C47A', kind: 'terra', sea: -0.05, water: ['#2D6EA6', '#4FA3D9'], land: ['#E6D49A', '#73C47A', '#4FA56A', '#3E8C5E', '#DCE9A0'], cap: '#F2F7F0', atmo: '#9FE8C0' },
+  { name: 'ocean', tint: '#4FA3D9', kind: 'terra', sea: 0.28, water: ['#235C93', '#3A85C2'], land: ['#F3E1AE', '#83CBA0', '#5BAF7A', '#EAF3D6'], cap: '#EAF3FB', atmo: '#8CCBFF' },
+  { name: 'dune', tint: '#E6B36A', kind: 'mesa', land: ['#B9783F', '#CC8A4D', '#E6B36A', '#F3CE8C', '#F8E3B6'], atmo: '#FFD8A0' },
+  { name: 'frost', tint: '#CFE6F2', kind: 'terra', sea: 0.05, water: ['#5C86B8', '#88AFCB'], land: ['#CFE6F2', '#E6F4FB', '#FFFFFF', '#A3C8DE'], cap: '#FFFFFF', atmo: '#D6F0FF' },
+  { name: 'coral', tint: '#EE9A98', kind: 'bands', land: ['#EE9A98', '#FFC4B6', '#D47586', '#FFE2CB', '#B9607A', '#F6B39C'], atmo: '#FFC2CC' },
+  { name: 'crystal', tint: '#9C8BE0', kind: 'mesa', land: ['#5F4FAE', '#7764C4', '#9C8BE0', '#C6B8F5', '#F0E7FF'], atmo: '#CFC2FF', crystals: '#B8F1FF' },
 ];
 
 function readGoals() {
@@ -417,109 +419,322 @@ function layout(planets) {
   }
 }
 
-// ---------- Camera: look around and fly ----------
-const look = { yaw: 0, pitch: 0, tYaw: 0, tPitch: 0 };
-let speed = 0;           // forward speed in units per second, eases back to zero
-let dirty = true;        // true when something changed and we need to draw again
-const forward = new THREE.Vector3();
+// ---------- The player's ship and the chase camera ----------
+const ship = makeShip();
+scene.add(ship.root, ...ship.world);
+const MAX_SPEED = 36, MAX_BACK = 9, MAX_CLIMB = 10, TURN_RATE = 0.9;
+const flight = { yaw: 0, speed: 0, yawVel: 0, climb: 0, accel: 0, turnTo: null };
+// Default view: behind, above and a little to the right of the ship (a back three-quarter view).
+const PITCH_REST = 0.3, YAW_REST = 0.7, FAR = 26;
+// Camera and hull share one state machine: outside -> entering -> inside -> leaving -> outside.
+// Only this machine opens or closes the hull. Scrolling in past ENTER_AT (1x the ship's length) enters; inside, only
+// scrolling out past EXIT_AT (1.8x) or the "Back outside" button leaves. Both measure the camera's target distance.
+const SHIP_LEN = 18.4, ENTER_AT = SHIP_LEN * 1.0, EXIT_AT = SHIP_LEN * 1.8;
+const IN_DIST = 15, IN_YAW = 1.45, IN_PITCH = 0.12, GLIDE = 1.4;   // where the camera settles inside, and how long the glide takes
+const view = { mode: 'outside', t: 0, from: null, to: null };
+const chase = { dist: FAR, tDist: FAR, yaw: YAW_REST, pitch: PITCH_REST, dragging: false, ready: false };
+const fwd = new THREE.Vector3(), tmpV = new THREE.Vector3(), pivot = new THREE.Vector3(), desired = new THREE.Vector3(), head = new THREE.Vector3();
+const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 
-function aimAt(target, instant) {
-  const d = target.clone().sub(camera.position).normalize();
-  look.tYaw = Math.atan2(-d.x, -d.z); look.tPitch = Math.asin(clamp(d.y, -1, 1));
-  if (instant) { look.yaw = look.tYaw; look.pitch = look.tPitch; }
-}
-function turn(dx, dy) {
-  glide = null;
-  const perPx = THREE.MathUtils.degToRad(camera.fov) / innerHeight;
-  look.tYaw += dx * perPx; look.tPitch = clamp(look.tPitch + dy * perPx, -1.55, 1.55);
-  dirty = true;
-}
-function push(amount) {
-  glide = null;
-  if (reduced) { moveBy(amount * 0.35); return; }
-  speed = clamp(speed + amount, -140, 140);
-  dirty = true;
-}
-function moveBy(dist) {
-  camera.getWorldDirection(forward);
-  camera.position.addScaledVector(forward, dist);
-  keepClear();
-  dirty = true;
-}
-// Never fly inside a planet, and never drift off into nowhere.
-function keepClear(skip) {
-  for (const p of planets) {
-    if (p === skip) continue;
-    const d = camera.position.clone().sub(p.group.position), min = p.look.radius * 1.45 + 2;
-    if (d.length() < min) { camera.position.copy(p.group.position).addScaledVector(d.normalize(), min); speed *= 0.5; }
-  }
-  if (camera.position.length() > volume * 1.5) { camera.position.setLength(volume * 1.5); speed = 0; }
-}
+// Pilot moods can be set from code: window.stashPilot.setMood('worried'), or a 'stash:mood' event. null goes back to automatic.
+window.stashPilot = { moods: MOODS, setMood: m => ship.pilot.setMood(m), get mood() { return ship.pilot.mood; } };
+addEventListener('stash:mood', e => ship.pilot.setMood(e.detail?.mood ?? null));
 
-// A good spot to look at a planet from: close, about 70 degrees off the sun so its dark side shows.
-const UP2 = new THREE.Vector3().crossVectors(SIDE, SUN_DIR);
-function viewSpots(p) {
-  return [SIDE, SIDE.clone().negate(), UP2, UP2.clone().negate()].map(perp => {
-    const out = SUN_DIR.clone().multiplyScalar(0.35).addScaledVector(perp, 0.94).normalize();
-    return p.group.position.clone().addScaledVector(out, p.look.radius * 3.6 + 8);
-  });
-}
-// Glide the camera over to a planet. With reduced motion it jumps there instead.
-let glide = null;
-function showPlanet(p) {
-  const to = viewSpots(p).reduce((a, b) => a.distanceTo(camera.position) < b.distanceTo(camera.position) ? a : b);
-  const d = p.group.position.clone().sub(to).normalize();
-  let yaw = Math.atan2(-d.x, -d.z);
-  yaw += Math.round((look.yaw - yaw) / (Math.PI * 2)) * Math.PI * 2; // turn the short way round
-  const pitch = Math.asin(clamp(d.y, -1, 1));
-  speed = 0;
-  if (reduced) { camera.position.copy(to); look.yaw = look.tYaw = yaw; look.pitch = look.tPitch = pitch; glide = null; }
-  else glide = { p, from: camera.position.clone(), to, yaw0: look.yaw, pitch0: look.pitch, yaw, pitch, t: 0,
-    dur: clamp(camera.position.distanceTo(to) / 110, 1.2, 2.8) };
-  dirty = true;
-}
+// Keys: W/A/S/D or arrows to fly, Space and Shift to rise and sink.
+// Ignored while the console is open, while typing, and with Ctrl/Cmd/Alt held.
+const FLIGHT_KEYS = { KeyW: 'fwd', ArrowUp: 'fwd', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left',
+  KeyD: 'right', ArrowRight: 'right', Space: 'up', ShiftLeft: 'down', ShiftRight: 'down' };
+const keys = new Set();
+const dialogOpen = () => !!document.querySelector('dialog[open]');
+const busy = (e) => { const el = e.target; return el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); };
+addEventListener('keydown', e => {
+  // On a Mac, keys released while Cmd is held never send a key-up, which used to leave a turn key "held" and the ship circling.
+  if (e.metaKey || e.key === 'Meta') { keys.clear(); return; }
+  const k = FLIGHT_KEYS[e.code];
+  if (!k || e.ctrlKey || e.altKey || dialogOpen() || busy(e)) return;
+  // Flight keys are never button presses: without this, Space (rise) would "click" a focused HUD button such as Console.
+  if (/^(BUTTON|A)$/.test(e.target?.tagName)) e.target.blur();
+  if (view.mode !== 'outside') leaveInside();   // flying starts once the camera is back outside
+  keys.add(k); flight.turnTo = null; e.preventDefault();
+});
+addEventListener('keyup', e => { if (e.key === 'Meta') keys.clear(); const k = FLIGHT_KEYS[e.code]; if (k) keys.delete(k); });
+addEventListener('blur', () => keys.clear());
+document.addEventListener('visibilitychange', () => keys.clear());
 
+// Mouse: drag to swing the camera around the ship (it eases back on release). Scroll or pinch to zoom.
 const pointers = new Map();
 let pinchDist = 0;
-function pinchInfo() {
-  const [a, b] = [...pointers.values()];
-  return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+const pinch = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+function setZoom(d) {
+  if (view.mode === 'entering' || view.mode === 'leaving') return;   // the glide owns the camera; extra scrolling can't flip it
+  if (view.mode === 'outside') {
+    chase.tDist = clamp(d, ENTER_AT, 70);
+    if (d < ENTER_AT) enterInside();
+  } else {
+    chase.tDist = clamp(d, 1, EXIT_AT + 1);
+    if (d > EXIT_AT) leaveInside(Math.min(70, d));
+  }
 }
+const zoom = f => setZoom(chase.tDist * f);
+const lookBtn = document.getElementById('lookCloser');
+function updateLookBtn() {
+  const inside = view.mode === 'inside' || view.mode === 'entering';
+  lookBtn.textContent = inside ? 'Back outside' : 'Look closer';
+  lookBtn.setAttribute('aria-pressed', inside);
+}
+// Glide the camera from where it is now to a new distance, angle and centre, easing in and out.
+function glide(to) {
+  view.from = { dist: chase.dist, yaw: chase.yaw, pitch: chase.pitch, pivot: pivot.clone() };
+  view.to = to; view.t = 0;
+  chase.dragging = false;
+}
+function enterInside() {
+  if (view.mode === 'inside' || view.mode === 'entering') return;
+  view.mode = 'entering'; ship.setOpen(true);
+  keys.clear(); auto.active = false; auto.idle = 0; flight.turnTo = null;
+  glide({ dist: IN_DIST, yaw: wrapAngle(IN_YAW), pitch: IN_PITCH });
+  chase.tDist = IN_DIST; updateLookBtn();
+}
+function leaveInside(dist = FAR) {
+  if (view.mode === 'outside' || view.mode === 'leaving') return;
+  view.mode = 'leaving'; ship.setOpen(false);
+  const d = clamp(dist, ENTER_AT + 2, 70);
+  glide({ dist: d, yaw: YAW_REST, pitch: PITCH_REST });
+  chase.tDist = d; updateLookBtn();
+}
+lookBtn.addEventListener('click', () => (view.mode === 'inside' || view.mode === 'entering') ? leaveInside() : enterInside());
+// A click (not a drag) on the dashboard screen opens the console.
+const clickStart = { x: 0, y: 0, t: 0 }, ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+cv.addEventListener('pointerup', e => {
+  if (Math.hypot(e.clientX - clickStart.x, e.clientY - clickStart.y) > 6 || performance.now() - clickStart.t > 500) return;
+  ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  if (ray.intersectObjects(ship.clickables, false).length) dispatchEvent(new CustomEvent('stash:console'));
+});
 cv.addEventListener('pointerdown', e => {
+  Object.assign(clickStart, { x: e.clientX, y: e.clientY, t: performance.now() });
   cv.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pointers.size === 2) pinchDist = pinchInfo().d;
-  cv.classList.add('dragging');
+  if (pointers.size === 2) pinchDist = pinch();
+  chase.dragging = true; cv.classList.add('dragging');
 });
 cv.addEventListener('pointermove', e => {
   const p = pointers.get(e.pointerId);
   if (!p) return;
-  if (pointers.size === 1) { turn(e.clientX - p.x, e.clientY - p.y); p.x = e.clientX; p.y = e.clientY; return; }
-  const before = pinchInfo();
+  if (pointers.size === 1) {
+    chase.yaw -= (e.clientX - p.x) * 0.0045;
+    if (view.mode === 'entering' || view.mode === 'leaving') { p.x = e.clientX; p.y = e.clientY; return; }
+    chase.pitch = clamp(chase.pitch + (e.clientY - p.y) * 0.004, view.mode === 'inside' ? -0.4 : -0.9, view.mode === 'inside' ? 1.2 : 1.35);
+  }
   p.x = e.clientX; p.y = e.clientY;
-  const after = pinchInfo();
-  turn(after.x - before.x, after.y - before.y);
-  push((after.d - pinchDist) * 0.9); pinchDist = after.d;
+  if (pointers.size === 2) { const d = pinch(); zoom(pinchDist / d); pinchDist = d; }
 });
 function endPointer(e) {
   pointers.delete(e.pointerId);
-  if (pointers.size === 2) pinchDist = pinchInfo().d;
-  if (!pointers.size) cv.classList.remove('dragging');
+  if (pointers.size === 2) pinchDist = pinch();
+  if (!pointers.size) { chase.dragging = false; cv.classList.remove('dragging'); }
 }
 cv.addEventListener('pointerup', endPointer);
 cv.addEventListener('pointercancel', endPointer);
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * innerHeight : e.deltaY;
-  push(-px * 0.5);
+  zoom(Math.exp(px * 0.0012));
 }, { passive: false });
-// Keyboard: arrow keys look around, + and - fly forward and back.
-cv.addEventListener('keydown', e => {
-  const k = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] }[e.key];
-  if (k) { turn(k[0], k[1]); e.preventDefault(); }
-  else if (e.key === '+' || e.key === '=') { push(40); e.preventDefault(); }
-  else if (e.key === '-' || e.key === '_') { push(-40); e.preventDefault(); }
-});
+
+// Never fly into a planet, and never drift off into nowhere.
+const clearance = p => p.look.radius * p.group.scale.x * 1.12;
+function keepClear(pos, pad) {
+  for (const p of planets) {
+    tmpV.copy(pos).sub(p.group.position);
+    const min = clearance(p) + pad;
+    if (tmpV.length() < min) pos.copy(p.group.position).addScaledVector(tmpV.normalize(), min); // slide along it
+  }
+  if (pos.length() > volume * 1.5) pos.setLength(volume * 1.5);
+}
+
+// ---------- Autopilot: when nobody is steering, cruise between waypoints, hover a while, and go somewhere new ----------
+const AUTO_AFTER = 3, CRUISE = 15, ARRIVE = 5;
+const auto = { idle: 0, active: false, target: null, state: 'pick', hover: 0, travel: 0, heading: null, askedCrew: false };
+// Distance from point c to the segment a-b.
+function segDist(a, b, c) {
+  const ab = tmpV.copy(b).sub(a), t = clamp(c.clone().sub(a).dot(ab) / Math.max(ab.lengthSq(), 1e-6), 0, 1);
+  return a.clone().addScaledVector(ab, t).distanceTo(c);
+}
+function pickWaypoint() {
+  const pos = ship.root.position, margin = ship.radius + 10;
+  for (let tries = 0; tries < 60; tries++) {
+    let cand;
+    if (planets.length && Math.random() < 0.3) {
+      // Cruise past a planet, keeping a comfortable distance.
+      const p = planets[Math.floor(Math.random() * planets.length)], a = Math.random() * Math.PI * 2;
+      cand = p.group.position.clone().add(new THREE.Vector3(Math.cos(a), (Math.random() - 0.5) * 0.4, Math.sin(a)).normalize().multiplyScalar(clearance(p) + margin + 12 + Math.random() * 15));
+    } else {
+      // A clearly different direction from the last trip, a good distance away.
+      const turn = (Math.random() < 0.5 ? -1 : 1) * (1.0 + Math.random() * 1.6), yaw = flight.yaw + turn, d = 60 + Math.random() * 80;
+      cand = pos.clone().add(new THREE.Vector3(-Math.sin(yaw), (Math.random() - 0.5) * 0.35, -Math.cos(yaw)).multiplyScalar(d));
+    }
+    if (cand.length() > volume * 1.25 || cand.distanceTo(pos) < 40) continue;
+    const dir = cand.clone().sub(pos).normalize();
+    if (auto.heading && dir.dot(auto.heading) > 0.65) continue; // not the same way again
+    if (planets.some(p => segDist(pos, cand, p.group.position) < clearance(p) + margin)) continue;
+    auto.heading = dir;
+    return cand;
+  }
+  // Nothing good nearby (crowded or near the edge): head back toward the middle.
+  const back = pos.clone().multiplyScalar(-1).setLength(60).add(pos);
+  auto.heading = back.clone().sub(pos).normalize();
+  return back;
+}
+// Returns the inputs the autopilot wants this frame: forward speed target, turn (-1..1) and climb (-1..1).
+function autopilot(dt) {
+  if (auto.state === 'pick') { auto.target = pickWaypoint(); auto.state = 'travel'; auto.travel = 0; }
+  const pos = ship.root.position;
+  if (auto.state === 'travel') {
+    auto.travel += dt;
+    const to = auto.target.clone().sub(pos), dist = to.length();
+    const diff = wrapAngle(Math.atan2(-to.x, -to.z) - flight.yaw);
+    // Slow right down for big turns (so it turns in place instead of looping), and ease in when arriving.
+    const align = Math.max(0, Math.cos(diff)) ** 3;
+    const speed = CRUISE * align * clamp(dist / 35, 0.12, 1);
+    if (dist < ARRIVE || auto.travel > 45) {
+      auto.state = 'hover'; auto.hover = 5 + Math.random() * 4; auto.askedCrew = false;
+    }
+    return { speed, turn: clamp(diff * 1.6, -1, 1), climb: clamp(to.y / 12, -1, 1), cruising: true };
+  }
+  // Hover: a few seconds, or as long as the pilot is busy with something. Sometimes the pilot gets up for a while.
+  auto.hover -= dt;
+  if (!auto.askedCrew && auto.hover < 3) { auto.askedCrew = true; if (Math.random() < 0.6) ship.crew.start(); }
+  if (auto.hover <= 0 && ship.atControls) auto.state = 'pick';
+  return { speed: 0, turn: 0, climb: 0, cruising: false };
+}
+
+// Smooth acceleration, gentle slowdown, and turning that eases in and out.
+function fly(dt) {
+  const on = k => (keys.has(k) ? 1 : 0);
+  const live = view.mode === 'outside';
+  let ahead = live ? on('fwd') - on('back') : 0, turnIn = live ? on('left') - on('right') : 0, climbIn = live ? on('up') - on('down') : 0;
+  const outside = view.mode === 'outside';
+  const steering = keys.size > 0 && outside;   // keys pressed while inside wait until the camera is back out
+  // Any key takes over at once; letting go hands back to the autopilot after a few quiet seconds.
+  auto.idle = steering || flight.turnTo !== null ? 0 : auto.idle + dt;
+  if (steering) { auto.active = false; auto.state = 'pick'; auto.heading = null; }
+  else if (!auto.active && auto.idle > AUTO_AFTER && !reduced && outside) auto.active = true;
+  if (reduced || !outside) auto.active = false;   // inside, the ship stays put
+  if (!outside) insideLife(dt);
+  const before = flight.speed;
+  let cruising = false, thrust = ahead > 0 ? 1 : 0;
+  // Until the pilot is back in the seat, the ship only speeds up gently, so nobody gets left behind.
+  const limit = ship.atControls ? 1 : 0.2;
+  if (auto.active) {
+    const a = autopilot(dt);
+    cruising = a.cruising;
+    const want = a.speed * limit, rate = want > flight.speed ? 5 : 7;
+    flight.speed += clamp(want - flight.speed, -rate * dt, rate * dt);
+    turnIn = a.turn; climbIn = a.climb;
+    thrust = want > flight.speed + 0.5 ? 0.9 : flight.speed > 2 ? 0.35 : 0;
+  } else if (ahead > 0) flight.speed = Math.min(MAX_SPEED * limit, flight.speed + (flight.speed < 0 ? 24 : 12 + 6 * (1 - flight.speed / MAX_SPEED)) * dt);
+  else if (ahead < 0) flight.speed = Math.max(-MAX_BACK, flight.speed - (flight.speed > 0 ? 24 : 7) * dt);
+  else { flight.speed *= Math.exp(-dt * 1.1); if (Math.abs(flight.speed) < 0.02) flight.speed = 0; }
+  flight.accel = (flight.speed - before) / Math.max(dt, 1e-4);
+  let want = turnIn * TURN_RATE * (ship.atControls ? 1 : 0.5);
+  if (flight.turnTo !== null && !keys.size) {
+    const diff = wrapAngle(flight.turnTo - flight.yaw);
+    want = clamp(diff * 2, -TURN_RATE, TURN_RATE);
+    if (Math.abs(diff) < 0.004) flight.turnTo = null;
+  }
+  flight.yawVel += (want - flight.yawVel) * (1 - Math.exp(-dt * 3));
+  flight.yaw += flight.yawVel * dt;
+  flight.climb += (climbIn * MAX_CLIMB - flight.climb) * (1 - Math.exp(-dt * 2));
+  ship.root.rotation.y = flight.yaw;
+  fwd.set(-Math.sin(flight.yaw), 0, -Math.cos(flight.yaw));
+  ship.root.position.addScaledVector(fwd, flight.speed * dt);
+  ship.root.position.y += flight.climb * dt;
+  keepClear(ship.root.position, ship.radius + 2);
+  ship.update(dt, { thrust, flying: steering, cruising: cruising || (auto.active && Math.abs(flight.speed) > 1), stopped: Math.abs(flight.speed) < 1,
+    visible: shipOnScreen(), turn: clamp(flight.yawVel / TURN_RATE, -1, 1), turnVel: flight.yawVel,
+    accel: flight.accel, speedFrac: Math.min(1, Math.abs(flight.speed) / CRUISE), reduced });
+}
+
+// Outside: third person, behind, above and a little to the side, following with a slight lag and easing back after a drag.
+// Inside: the ship holds still and the camera orbits its centre with no ease-back. It never comes closer than the ship's
+// outline in that direction, so it can't pass through a wall. Entering and leaving are timed glides between the two.
+const insideRadius = dir => 1 / Math.sqrt((dir.x / 5.9) ** 2 + (dir.y / 4.6) ** 2 + (dir.z / 10.2) ** 2) + 1.2;
+const local = new THREE.Vector3(), qShip = new THREE.Quaternion();
+function cameraTargets(out) {
+  // The centre the camera looks at: the ship, a little lower when inside so both decks and the belly show.
+  out.copy(ship.root.position).y += view.mode === 'outside' || view.mode === 'leaving' ? 0.3 : -0.9;
+  return out;
+}
+function follow(dt) {
+  const target = cameraTargets(tmpV);
+  if (view.mode === 'entering' || view.mode === 'leaving') {
+    view.t = reduced ? 1 : Math.min(1, view.t + dt / GLIDE);
+    const e = view.t * view.t * (3 - 2 * view.t), f = view.from, to = view.to;
+    chase.dist = f.dist + (to.dist - f.dist) * e;
+    chase.yaw = f.yaw + wrapAngle(to.yaw - f.yaw) * e;
+    chase.pitch = f.pitch + (to.pitch - f.pitch) * e;
+    pivot.copy(f.pivot).lerp(target, e);
+    look = view.mode === 'entering' ? 1 - e : e;   // the outside view looks a little ahead of the ship; inside looks at its centre
+    if (view.t >= 1) { view.mode = view.mode === 'entering' ? 'inside' : 'outside'; chase.tDist = chase.dist; updateLookBtn(); }
+  } else {
+    if (view.mode === 'outside' && !chase.dragging) {
+      const k = reduced ? 1 : 1 - Math.exp(-dt * 2.2);
+      chase.yaw = YAW_REST + wrapAngle(chase.yaw - YAW_REST) * (1 - k); chase.pitch += (PITCH_REST - chase.pitch) * k;
+    }
+    chase.dist += (chase.tDist - chase.dist) * (reduced ? 1 : 1 - Math.exp(-dt * 6));
+    pivot.copy(target);
+    look = view.mode === 'outside' ? 1 : 0;
+  }
+  const a = flight.yaw + chase.yaw, cp = Math.cos(chase.pitch);
+  desired.set(Math.sin(a) * cp, Math.sin(chase.pitch), Math.cos(a) * cp);
+  if (view.mode !== 'outside') {
+    // Keep the camera outside the ship's outline (measured in the ship's own frame), so it never clips into a wall.
+    local.copy(desired).applyQuaternion(qShip.copy(ship.root.quaternion).invert());
+    const minD = insideRadius(local);
+    if (chase.dist < minD) { chase.dist = minD; chase.tDist = Math.max(chase.tDist, minD); }
+  }
+  desired.multiplyScalar(chase.dist).add(pivot);
+  keepClear(desired, 1.5);
+  if (!chase.ready || reduced) { camera.position.copy(desired); chase.ready = true; }
+  else camera.position.lerp(desired, 1 - Math.exp(-dt * (view.mode === 'outside' ? 5 : 12)));
+  camera.lookAt(tmpV.copy(pivot).addScaledVector(fwd, 1.5 * Math.cos(chase.yaw) * look));
+  ship.setView(camera);
+}
+// While the camera is inside, the ship hovers in place and the pilot keeps living their life.
+let lifeT = 0, look = 1;
+function insideLife(dt) {
+  flight.speed *= Math.exp(-dt * 3); if (Math.abs(flight.speed) < 0.05) flight.speed = 0;
+  flight.climb *= Math.exp(-dt * 3);
+  lifeT += dt;
+  if (lifeT > 6 && !reduced && ship.atControls && !flight.speed) { lifeT = 0; if (Math.random() < 0.7) ship.crew.start(); }
+}
+
+// The pilot only animates while the ship is on screen.
+const frustum = new THREE.Frustum(), projView = new THREE.Matrix4(), shipSphere = new THREE.Sphere();
+function shipOnScreen() {
+  camera.updateMatrixWorld();
+  frustum.setFromProjectionMatrix(projView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+  return frustum.intersectsSphere(shipSphere.set(ship.root.position, ship.radius));
+}
+
+// "Show in space" from the console: the ship turns to face that planet (the autopilot waits until it has).
+function showPlanet(p) {
+  leaveInside();
+  const d = p.group.position.clone().sub(ship.root.position);
+  flight.turnTo = Math.atan2(-d.x, -d.z);
+  auto.active = false; auto.idle = 0; auto.state = 'pick';
+  if (reduced) { flight.yaw = flight.turnTo; flight.turnTo = null; }
+}
+
+// A spot to start from: near a planet, about 70 degrees off the sun so its dark side shows.
+const UP2 = new THREE.Vector3().crossVectors(SIDE, SUN_DIR);
+function viewSpots(p, perps = [SIDE, SIDE.clone().negate(), UP2, UP2.clone().negate()]) {
+  return perps.map(perp => {
+    const out = SUN_DIR.clone().multiplyScalar(0.35).addScaledVector(perp, 0.94).normalize();
+    return p.group.position.clone().addScaledVector(out, p.look.radius * 3.6 + 38);
+  });
+}
 
 // ---------- Building the world ----------
 let planets = [];
@@ -554,24 +769,38 @@ function loadPlanets(first) {
     dust = makeDust(volume * 1.3); world.add(dust);
   }
   document.getElementById('banner').hidden = !examples;
-  cv.setAttribute('aria-label', `Space view with ${planets.length} ${examples ? 'example ' : ''}planet${planets.length === 1 ? '' : 's'}. Drag to look around, scroll or pinch to fly forward and back.`);
+  cv.setAttribute('aria-label', `Space view with your ship and ${planets.length} ${examples ? 'example ' : ''}planet${planets.length === 1 ? '' : 's'}. The ship flies itself when you're not steering. Fly with W, A, S, D or the arrow keys. Drag to look around the ship, scroll to zoom in and see inside.`);
   if (first) {
-    // Open on one planet up close, seen from its sunny side, with as many other planets as possible behind it.
-    // Each planet is tried from four sides, always about 70 degrees off the sun, so the terminator shows.
+    // Start the ship near one planet, level with it and seen from the side, with as many other planets as possible ahead.
     let best = null;
-    for (const p of planets) for (const pos of viewSpots(p)) {
+    for (const p of planets) for (const pos of viewSpots(p, [SIDE, SIDE.clone().negate()])) {
       const dir = p.group.position.clone().sub(pos).normalize();
-      const dots = planets.filter(q => q !== p).map(q => q.group.position.clone().sub(pos).normalize().dot(dir));
-      // Mostly we want planets ahead, but a few behind too, so looking back is not empty.
-      const seen = Math.min(3, dots.filter(x => x > 0.8).length) * 3 + Math.min(2, dots.filter(x => x < -0.4).length) * 2;
+      const seen = planets.filter(q => q !== p && q.group.position.clone().sub(pos).normalize().dot(dir) > 0.75).length;
       if (!best || seen > best.seen) best = { p, pos, seen };
     }
-    const hero = best.p;
-    camera.position.copy(best.pos);
-    aimAt(hero.group.position, true);
-    look.yaw = look.tYaw += 0.18; look.pitch = look.tPitch -= 0.05;
+    ship.root.position.copy(best.pos);
+    const d = best.p.group.position.clone().sub(best.pos);
+    ship.root.position.y = best.p.group.position.y; // level with it, so it sits ahead of the ship
+    flight.yaw = Math.atan2(-d.x, -d.z) + 0.22;
   }
-  dirty = true;
+  refreshShip(examples);
+}
+
+// The money shown on the ship: from saved data, or from the example planets when there is none yet.
+const PEAK_KEY = 'stashtronauts-debt-peak'; // the most ever owed, so the tow pod can shrink as debt is paid
+function refreshShip(examples) {
+  const tint = id => planets.find(p => p.id === id)?.look.biome.tint;
+  let info;
+  if (examples) {
+    info = { totalSaved: EXAMPLES.reduce((t, e) => t + e.amount, 0), goals: EXAMPLES.map(e => ({ id: e.id, name: e.label, progress: e.progress })),
+      emergencyMonths: 3100 / 2000, hasEmergencyFund: true, debt: 0, towPod: false };
+  } else info = shipMoney(load());
+  info.shipName = load().ship?.name || '';
+  info.goals = info.goals.map(g => ({ ...g, color: tint(g.id) }));
+  let peak = 0;
+  try { peak = +localStorage.getItem(PEAK_KEY) || 0; if (info.debt > peak) localStorage.setItem(PEAK_KEY, peak = info.debt); } catch (e) {}
+  info.debtPeak = peak;
+  ship.setMoney(info);
 }
 
 addEventListener('storage', e => { if (e.key === KEY || e.key === NAMES_KEY) loadPlanets(); });
@@ -602,12 +831,13 @@ function photograph(p) {
   const dist = Math.max(r * 1.3 / Math.tan(half), span * 1.12 / (Math.tan(half) * thumbCam.aspect));
   const out = SUN_DIR.clone().multiplyScalar(0.5).addScaledVector(SIDE, 0.86).normalize();
   thumbCam.position.copy(out).multiplyScalar(dist); thumbCam.lookAt(0, 0, 0);
+  const before = renderer.getViewport(new THREE.Vector4());
   renderer.setScissorTest(true);
   renderer.setScissor(0, 0, THUMB_W, THUMB_H); renderer.setViewport(0, 0, THUMB_W, THUMB_H);
   renderer.render(thumbScene, thumbCam);
   const pr = renderer.getPixelRatio();
   thumbCanvas.getContext('2d').drawImage(cv, 0, cv.height - THUMB_H * pr, THUMB_W * pr, THUMB_H * pr, 0, 0, THUMB_W, THUMB_H);
-  renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
+  renderer.setScissorTest(false); renderer.setViewport(before);
   parent.add(g); g.position.copy(home); g.scale.setScalar(scale);
   const id = p.id;
   thumbCanvas.toBlob(blob => {
@@ -623,40 +853,23 @@ const clock = new THREE.Clock();
 let elapsed = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  // Ease the view toward where the pointer asked it to look.
-  const ease = reduced ? 1 : 1 - Math.exp(-dt * 14);
-  const dYaw = look.tYaw - look.yaw, dPitch = look.tPitch - look.pitch;
-  if (Math.abs(dYaw) + Math.abs(dPitch) > 1e-5) { look.yaw += dYaw * ease; look.pitch += dPitch * ease; dirty = true; }
-  if (glide) {
-    glide.t = Math.min(1, glide.t + dt / glide.dur);
-    const e = glide.t * glide.t * (3 - 2 * glide.t);
-    camera.position.lerpVectors(glide.from, glide.to, e);
-    keepClear(glide.p);
-    look.yaw = look.tYaw = lerp(glide.yaw0, glide.yaw, e); look.pitch = look.tPitch = lerp(glide.pitch0, glide.pitch, e);
-    if (glide.t >= 1) glide = null;
-    dirty = true;
-  }
-  camera.rotation.set(look.pitch, look.yaw, 0, 'YXZ');
+  if (dialogOpen()) keys.clear(); // no flying while the console is open
+  fly(dt);
+  follow(dt);
   // Planets grow toward their size, and glow softly for a moment after their goal changes.
   for (const p of planets) {
     const target = sizeFor(p.progress), s = p.group.scale.x;
-    if (Math.abs(target - s) > 1e-4) { p.group.scale.setScalar(reduced ? target : s + (target - s) * (1 - Math.exp(-dt * 2.5))); dirty = true; }
-    if (p.pulse > 0) { p.pulse = reduced ? 0 : Math.max(0, p.pulse - dt / 2.2); p.glow.value = 1 + Math.sin(p.pulse * Math.PI) * 1.4; dirty = true; }
+    if (Math.abs(target - s) > 1e-4) p.group.scale.setScalar(reduced ? target : s + (target - s) * (1 - Math.exp(-dt * 2.5)));
+    if (p.pulse > 0) { p.pulse = reduced ? 0 : Math.max(0, p.pulse - dt / 2.2); p.glow.value = 1 + Math.sin(p.pulse * Math.PI) * 1.4; }
   }
-  if (Math.abs(speed) > 0.05) { moveBy(speed * dt); speed *= Math.exp(-dt * 2.6); } else speed = 0;
-
   if (!reduced) {
     elapsed += dt;
     for (const p of planets) p.body.rotation.y = p.look.spinPhase + elapsed * p.look.spin;
-    dirty = true;
   }
-  if (thumbQueue.length) { photograph(thumbQueue.shift()); dirty = true; }
-  if (dirty) {
-    sky.position.copy(camera.position);
-    stars.material.uniforms.pr.value = renderer.getPixelRatio();
-    renderer.render(scene, camera);
-    dirty = false;
-  }
+  if (thumbQueue.length) photograph(thumbQueue.shift());
+  sky.position.copy(camera.position);
+  stars.material.uniforms.pr.value = renderer.getPixelRatio();
+  renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
 

@@ -5,7 +5,7 @@ Turn your savings goals into planets you can watch grow. A friendly money tracke
 
 **Live demo:** https://YOUR-USERNAME.github.io/money-world/
 
-**Status:** The tracker lives inside the space view as a ship console (a tablet built into the dashboard), and your savings goals appear as 3D planets that grow as you save. You can look around and fly between them. The rest of the planet world is in active development.
+**Status:** The tracker lives inside the space view as a ship console (a tablet built into the dashboard), and your savings goals appear as 3D planets that grow as you save. You fly a small ship (also your pilot's home) between them with W/A/S/D or the arrow keys. The rest of the planet world is in active development.
 
 ## What it does today
 - **What you have:** track your accounts and see what you have minus what you owe
@@ -29,6 +29,7 @@ Replace the tabs with a free-flying space scene.
 
 ## Roadmap
 - [x] Working tracker: accounts, goals, budgets, debt payoff planner
+- [x] Your ship and pilot: chase camera, keyboard flight, a pilot with moods, and your money shown on the ship
 - [x] Ship console over the space view, with a one-question-at-a-time first-visit setup and a keypad for entering money
 - [x] Live on GitHub Pages
 - [x] 3D space view: drag to look, scroll or pinch to fly
@@ -51,6 +52,7 @@ Replace the tabs with a free-flying space scene.
 - `console.js`, `console.css`: the ship console (the money tracker)
 - `CLAUDE.md`: notes for working on the project (it's desktop first; a phone layout comes later)
 - `money.js`: saved data and money math shared by the console and the space view
+- `ship.js`, `pilot.js`: the player's ship and its pilot
 - `docs/STYLE.md`: the art style guide
 
 ## Run it locally
