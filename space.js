@@ -274,6 +274,101 @@ function selectPlanet(p) {
   flyCamera(p.x, p.y + (W < 700 ? H * 0.17 / zoom : 0), zoom);
 }
 
+// ---------- Moving things ----------
+// Anything that flies around (this ship now; comets, cargo pods and more later) is a "mover".
+// The cap keeps space lively without slowing the page down.
+const MAX_MOVERS = 30;
+const movers = [];
+function addMover(m) { if (movers.length < MAX_MOVERS) movers.push(m); return m; }
+
+// A small traffic ship that flies a loop between the first and last planets (the longest trip).
+addMover({ from: 0, to: 0, t: 0, wait: 1, side: 1, x: 0, y: 0, angle: 0, speed: 0, trail: [], orbit: 0, update: updateShip, draw: drawShip });
+
+// The flight path is a gentle curve: start near planet A, bend out to one side, end near planet B.
+function shipRoute(m) {
+  const A = planets[m.from], B = planets[m.to];
+  const dx = B.x - A.x, dy = B.y - A.y, dist = Math.hypot(dx, dy) || 1, ux = dx / dist, uy = dy / dist;
+  const p0 = { x: A.x + ux * (A.look.radius + 50), y: A.y + uy * (A.look.radius + 50) };
+  const p2 = { x: B.x - ux * (B.look.radius + 50), y: B.y - uy * (B.look.radius + 50) };
+  const bend = dist * 0.22 * m.side;
+  const c = { x: (p0.x + p2.x) / 2 - uy * bend, y: (p0.y + p2.y) / 2 + ux * bend };
+  return { p0, c, p2, length: dist };
+}
+const bezier = (r, t) => ({ x: (1 - t) ** 2 * r.p0.x + 2 * (1 - t) * t * r.c.x + t * t * r.p2.x, y: (1 - t) ** 2 * r.p0.y + 2 * (1 - t) * t * r.c.y + t * t * r.p2.y });
+const ease = t => t * t * (3 - 2 * t); // start slow, speed up, slow down to land
+
+function updateShip(m, dt) {
+  if (!planets.length) return;
+  const last = planets.length - 1;
+  if (Math.min(m.from, m.to) !== 0 || Math.max(m.from, m.to) !== last) { m.from = 0; m.to = last; m.t = 0; m.trail.length = 0; }
+  let px = m.x, py = m.y;
+  if (planets.length < 2) {
+    // Only one planet: circle it instead.
+    const P = planets[0], r = P.look.radius * 1.8 + 40; // wide enough to clear a ring
+    m.orbit += reduced ? 0 : dt * 0.35;
+    m.x = P.x + Math.cos(m.orbit) * r; m.y = P.y + Math.sin(m.orbit) * r * 0.8;
+    m.angle = Math.atan2(m.y - py, m.x - px) || m.angle;
+    m.speed = reduced ? 0 : 1;
+  } else {
+    const route = shipRoute(m);
+    if (reduced) { m.t = 0; m.wait = 1; }
+    else if (m.wait > 0) m.wait -= dt;
+    else {
+      m.t += dt * 110 / route.length; // about 110 space units per second
+      if (m.t >= 1) { m.t = 0; m.wait = 1.5; [m.from, m.to] = [m.to, m.from]; m.side = -m.side; } // arrive, rest, head back
+    }
+    const route2 = shipRoute(m), e = ease(m.t), pos = bezier(route2, e), ahead = bezier(route2, Math.min(1, e + 0.01));
+    m.x = pos.x; m.y = pos.y;
+    if (m.t > 0 || m.wait <= 0) m.angle = Math.atan2(ahead.y - pos.y, ahead.x - pos.x);
+    else { const B = planets[m.to]; m.angle = Math.atan2(B.y - m.y, B.x - m.x); } // parked: face the next stop
+    m.speed = m.wait > 0 || reduced ? 0 : Math.sin(Math.PI * m.t); // 0 at each end, 1 in the middle
+  }
+  // Remember recent positions for the glowing trail, and forget old ones.
+  for (const p of m.trail) p.age += dt;
+  while (m.trail.length && m.trail[0].age > 1.1) m.trail.shift();
+  if (!reduced && m.speed > 0.05) {
+    const lastP = m.trail[m.trail.length - 1];
+    if (!lastP || Math.hypot(m.x - lastP.x, m.y - lastP.y) > 3) m.trail.push({ x: m.x, y: m.y, age: 0 });
+  }
+}
+
+function drawShip(m, t) {
+  if (!planets.length) return;
+  const s = Math.max(1.3, 0.8 / cam.zoom); // stay visible when zoomed far out
+
+  // Glowing trail: a wide soft pass and a thin bright pass, both fading with age.
+  ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'butt';
+  for (let i = 1; i < m.trail.length; i++) {
+    const a = m.trail[i - 1], b = m.trail[i], life = 1 - b.age / 1.1;
+    if (b.age < 0.12) break; // start the trail behind the flame so the flame stays visible
+    ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    ctx.strokeStyle = `rgba(120,220,255,${0.18 * life})`; ctx.lineWidth = 12 * s * life; ctx.stroke();
+    ctx.strokeStyle = `rgba(200,245,255,${0.55 * life})`; ctx.lineWidth = 3 * s * life; ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.save(); ctx.translate(m.x, m.y); ctx.rotate(m.angle); ctx.scale(s, s);
+  // Engine flame, bigger when flying faster, flickering a little.
+  if (m.speed > 0.05) {
+    const len = (14 + 20 * m.speed) * (0.85 + 0.15 * Math.sin(t * 0.04) + 0.1 * Math.sin(t * 0.017));
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'rgba(255,170,80,0.85)'; ctx.beginPath(); ctx.moveTo(-11, -6); ctx.quadraticCurveTo(-11 - len, 0, -11, 6); ctx.fill();
+    ctx.fillStyle = 'rgba(255,240,170,0.95)'; ctx.beginPath(); ctx.moveTo(-11, -3.2); ctx.quadraticCurveTo(-11 - len * 0.6, 0, -11, 3.2); ctx.fill();
+    ctx.restore();
+  }
+  // Chunky little ship: fins, rounded hull, stripe, glass bubble. It points to the right.
+  ctx.lineWidth = 1.6; ctx.strokeStyle = 'rgba(15,18,45,0.6)'; ctx.lineJoin = 'round';
+  ctx.fillStyle = '#6C7BD9';
+  ctx.beginPath(); ctx.moveTo(-6, -6); ctx.lineTo(-13, -12); ctx.lineTo(-10, -4); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-6, 6); ctx.lineTo(-13, 12); ctx.lineTo(-10, 4); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#F3F5FB';
+  ctx.beginPath(); ctx.moveTo(-12, -6); ctx.quadraticCurveTo(4, -10, 15, 0); ctx.quadraticCurveTo(4, 10, -12, 6); ctx.quadraticCurveTo(-14, 0, -12, -6); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#FF8A65'; ctx.fillRect(-7, -6.4, 3.5, 12.8);
+  ctx.fillStyle = '#7FE0C2'; ctx.beginPath(); ctx.ellipse(4, 0, 4.5, 3.6, 0, 0, 6.283); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.beginPath(); ctx.ellipse(5, -1.4, 1.6, 0.9, 0, 0, 6.283); ctx.fill();
+  ctx.restore();
+}
+
 // ---------- Drawing ----------
 function draw(t) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -281,6 +376,7 @@ function draw(t) {
   // Switch to world coordinates: everything below is placed in space, not on the screen.
   ctx.setTransform(dpr * cam.zoom, 0, 0, dpr * cam.zoom, dpr * (W / 2 - cam.x * cam.zoom), dpr * (H / 2 - cam.y * cam.zoom));
   for (const p of planets) drawPlanet(p, t);
+  for (const m of movers) m.draw(m, t);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   drawLabels();
 }
@@ -394,6 +490,7 @@ function frame(t) {
     }
     dirty = true;
   }
+  for (const m of movers) m.update(m, dt);
   // Twinkling stars mean we redraw every frame, unless motion is reduced.
   if (dirty || !reduced) { draw(t); dirty = false; }
   requestAnimationFrame(frame);
