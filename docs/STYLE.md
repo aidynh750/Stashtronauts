@@ -9,7 +9,7 @@ We take inspiration from the *mood* of the calm, chunky worlds of Astroneer and 
 
 ## Shapes
 - **Chunky and low-detail.** Big simple forms, flat color patches, a few sizes of detail. If a detail is too small to see on a phone, leave it out.
-- **Round over sharp.** Rounded hulls, soft lumpy terrain, circles for heads and bodies. Sharp points only for small accents like fins.
+- **Round over sharp.** Soft lumpy terrain and rounded props. The player's ship is the exception: an angular, plated, much-repaired working ship in weathered khaki, olive, rust and charcoal with a few burnt-orange accents.
 - **Soft outlines.** A thin, semi-transparent dark outline (`rgba(10,12,40,0.35)`), never solid black.
 
 ## Light and shading
@@ -31,7 +31,7 @@ Round, expressive and built from layered parts (body, eyes, mouth, hair or hat, 
 
 ## Motion
 - Ease in and out. Things speed up gently and slow down to land.
-- Keep it calm: nothing in space moves on its own except the planets' slow spin. The ship moves only when you fly it, and its flame and trail show only while thrusting.
+- Keep it calm: nothing in space moves on its own except the planets' slow spin and the ship's autopilot cruising. The flame and trail show only while thrusting.
 - **Respect `prefers-reduced-motion`.** When it is on, planets stop spinning and the camera moves in steps instead of gliding.
 
 ## Tone

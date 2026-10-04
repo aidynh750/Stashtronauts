@@ -440,33 +440,50 @@ const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 window.stashPilot = { moods: MOODS, setMood: m => ship.pilot.setMood(m), get mood() { return ship.pilot.mood; } };
 addEventListener('stash:mood', e => ship.pilot.setMood(e.detail?.mood ?? null));
 
-// Keys: W/A/S/D or arrows to fly, Space and Shift to rise and sink.
-// Ignored while the console is open, while typing, and with Ctrl/Cmd/Alt held.
-const FLIGHT_KEYS = { KeyW: 'fwd', ArrowUp: 'fwd', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left',
-  KeyD: 'right', ArrowRight: 'right', Space: 'up', ShiftLeft: 'down', ShiftRight: 'down' };
-const keys = new Set();
+// Keys: W/A/S/D or arrows to fly, Space to rise, C or Ctrl to sink, Shift to boost. F toggles the free camera.
+// Everything is ignored while the console (or any dialog) is open or a text field has focus.
+const FLIGHT_KEYS = { KeyW: 'fwd', ArrowUp: 'fwd', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
+  Space: 'up', KeyC: 'down', ControlLeft: 'down', ControlRight: 'down', ShiftLeft: 'boost', ShiftRight: 'boost' };
+// In the free camera the same hands fly the camera instead: W/A/S/D, Q and E for down and up, Shift for faster.
+const FREE_KEYS = { KeyW: 'fwd', ArrowUp: 'fwd', KeyS: 'back', ArrowDown: 'back', KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right',
+  KeyE: 'up', Space: 'up', KeyQ: 'down', ShiftLeft: 'fast', ShiftRight: 'fast' };
+const keys = new Set(), freeKeys = new Set();    // held key codes
+const held = (map, set, action) => { for (const c of set) if (map[c] === action) return 1; return 0; };
 const dialogOpen = () => !!document.querySelector('dialog[open]');
 const busy = (e) => { const el = e.target; return el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)); };
 addEventListener('keydown', e => {
   // On a Mac, keys released while Cmd is held never send a key-up, which used to leave a turn key "held" and the ship circling.
-  if (e.metaKey || e.key === 'Meta') { keys.clear(); return; }
-  const k = FLIGHT_KEYS[e.code];
-  if (!k || e.ctrlKey || e.altKey || dialogOpen() || busy(e)) return;
-  // Flight keys are never button presses: without this, Space (rise) would "click" a focused HUD button such as Console.
-  if (/^(BUTTON|A)$/.test(e.target?.tagName)) e.target.blur();
+  if (e.metaKey || e.key === 'Meta') { keys.clear(); freeKeys.clear(); return; }
+  if (e.altKey || dialogOpen() || busy(e)) return;
+  // Ctrl sinks the ship, so while it's held, keep Ctrl+key from reaching the browser's shortcuts (where the browser lets a page do that).
+  if (e.ctrlKey) e.preventDefault();
+  if (/^(BUTTON|A)$/.test(e.target?.tagName) && (FLIGHT_KEYS[e.code] || FREE_KEYS[e.code])) e.target.blur(); // never "click" a focused HUD button
+  hideHint();
+  if (e.code === 'KeyF' && !e.ctrlKey) { if (!e.repeat) toggleFree(); e.preventDefault(); return; }
+  if (e.code === 'Escape' && view.mode === 'free') { leaveFree(); e.preventDefault(); return; }
+  // DEBUG (temporary): L extends and retracts the landing gear, until landing on planets is built (it will call ship.setLandingGear).
+  if (e.code === 'KeyL' && !e.ctrlKey) { if (!e.repeat) ship.setLandingGear(!ship.landingGear); return; }
+  if (view.mode === 'free') { if (FREE_KEYS[e.code]) { freeKeys.add(e.code); e.preventDefault(); } return; }
+  if (!FLIGHT_KEYS[e.code]) return;
   if (view.mode !== 'outside') leaveInside();   // flying starts once the camera is back outside
-  keys.add(k); flight.turnTo = null; e.preventDefault();
+  keys.add(e.code); flight.turnTo = null; e.preventDefault();
 });
-addEventListener('keyup', e => { if (e.key === 'Meta') keys.clear(); const k = FLIGHT_KEYS[e.code]; if (k) keys.delete(k); });
-addEventListener('blur', () => keys.clear());
-document.addEventListener('visibilitychange', () => keys.clear());
+addEventListener('keyup', e => { if (e.key === 'Meta') keys.clear(); keys.delete(e.code); freeKeys.delete(e.code); });
+addEventListener('blur', () => { keys.clear(); freeKeys.clear(); });
+document.addEventListener('visibilitychange', () => { keys.clear(); freeKeys.clear(); });
+
+// A small controls hint, shown on the first visit only.
+const hint = document.getElementById('hint');
+let hintSeen = false; try { hintSeen = !!localStorage.getItem('stashtronauts-hint'); } catch (e) {}
+if (hint && !hintSeen) { hint.hidden = false; setTimeout(hideHint, 15000); }
+function hideHint() { if (!hint || hint.hidden) return; hint.hidden = true; try { localStorage.setItem('stashtronauts-hint', '1'); } catch (e) {} }
 
 // Mouse: drag to swing the camera around the ship (it eases back on release). Scroll or pinch to zoom.
 const pointers = new Map();
 let pinchDist = 0;
 const pinch = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
 function setZoom(d) {
-  if (view.mode === 'entering' || view.mode === 'leaving') return;   // the glide owns the camera; extra scrolling can't flip it
+  if (view.mode === 'entering' || view.mode === 'leaving' || view.mode === 'free') return;   // the glide owns the camera; extra scrolling can't flip it
   if (view.mode === 'outside') {
     chase.tDist = clamp(d, ENTER_AT, 70);
     if (d < ENTER_AT) enterInside();
@@ -477,10 +494,14 @@ function setZoom(d) {
 }
 const zoom = f => setZoom(chase.tDist * f);
 const lookBtn = document.getElementById('lookCloser');
+const freeBtn = document.getElementById('freeCam');
 function updateLookBtn() {
   const inside = view.mode === 'inside' || view.mode === 'entering';
   lookBtn.textContent = inside ? 'Back outside' : 'Look closer';
   lookBtn.setAttribute('aria-pressed', inside);
+  lookBtn.hidden = view.mode === 'free';
+  freeBtn.textContent = view.mode === 'free' ? 'Back to ship' : 'Free camera';
+  freeBtn.setAttribute('aria-pressed', view.mode === 'free');
 }
 // Glide the camera from where it is now to a new distance, angle and centre, easing in and out.
 function glide(to) {
@@ -497,12 +518,40 @@ function enterInside() {
 }
 function leaveInside(dist = FAR) {
   if (view.mode === 'outside' || view.mode === 'leaving') return;
-  view.mode = 'leaving'; ship.setOpen(false);
+  view.mode = 'leaving'; view.closeLate = false; ship.setOpen(false);
   const d = clamp(dist, ENTER_AT + 2, 70);
   glide({ dist: d, yaw: YAW_REST, pitch: PITCH_REST });
   chase.tDist = d; updateLookBtn();
 }
 lookBtn.addEventListener('click', () => (view.mode === 'inside' || view.mode === 'entering') ? leaveInside() : enterInside());
+freeBtn.addEventListener('click', () => toggleFree());
+
+// ---------- Free camera: detach from the ship and fly the camera anywhere, through the open hull into every room ----------
+const free = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, speed: 5, side: 1 };
+const camDir = new THREE.Vector3(), camLocal = new THREE.Vector3(), qInv = new THREE.Quaternion();
+function toggleFree() { view.mode === 'free' ? leaveFree() : enterFree(); }
+function enterFree() {
+  if (view.mode === 'free') return;
+  view.mode = 'free'; view.closeLate = false;
+  keys.clear(); freeKeys.clear(); auto.active = false; auto.idle = 0; flight.turnTo = null;
+  // Cut the hull on the side the camera is on now, and keep that cut fixed, so flying inside never flips it.
+  camLocal.copy(camera.position).sub(ship.root.position).applyQuaternion(qInv.copy(ship.root.quaternion).invert());
+  free.side = camLocal.x >= 0 ? 1 : -1; ship.setCutSide(free.side); ship.setOpen(true);
+  free.pos.copy(camera.position);
+  camera.getWorldDirection(camDir); free.yaw = Math.atan2(-camDir.x, -camDir.z); free.pitch = Math.asin(clamp(camDir.y, -1, 1));
+  chase.dragging = false; updateLookBtn();
+}
+function leaveFree() {
+  if (view.mode !== 'free') return;
+  // Turn wherever the camera is into follow-camera terms, then glide back out; the hull closes once the camera is clear.
+  cameraTargets(pivot);
+  const off = camera.position.clone().sub(pivot), d = Math.max(0.5, off.length());
+  chase.dist = d; chase.pitch = Math.asin(clamp(off.y / d, -1, 1)); chase.yaw = wrapAngle(Math.atan2(off.x, off.z) - flight.yaw);
+  freeKeys.clear();
+  view.mode = 'leaving'; view.closeLate = true;
+  glide({ dist: clamp(Math.max(FAR, d), ENTER_AT + 2, 70), yaw: YAW_REST, pitch: PITCH_REST });
+  chase.tDist = view.to.dist; updateLookBtn();
+}
 // A click (not a drag) on the dashboard screen opens the console.
 const clickStart = { x: 0, y: 0, t: 0 }, ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 cv.addEventListener('pointerup', e => {
@@ -521,7 +570,9 @@ cv.addEventListener('pointerdown', e => {
 cv.addEventListener('pointermove', e => {
   const p = pointers.get(e.pointerId);
   if (!p) return;
-  if (pointers.size === 1) {
+  if (pointers.size === 1 && view.mode === 'free') {
+    free.yaw -= (e.clientX - p.x) * 0.0035; free.pitch = clamp(free.pitch - (e.clientY - p.y) * 0.0035, -1.5, 1.5);
+  } else if (pointers.size === 1) {
     chase.yaw -= (e.clientX - p.x) * 0.0045;
     if (view.mode === 'entering' || view.mode === 'leaving') { p.x = e.clientX; p.y = e.clientY; return; }
     chase.pitch = clamp(chase.pitch + (e.clientY - p.y) * 0.004, view.mode === 'inside' ? -0.4 : -0.9, view.mode === 'inside' ? 1.2 : 1.35);
@@ -539,6 +590,7 @@ cv.addEventListener('pointercancel', endPointer);
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * innerHeight : e.deltaY;
+  if (view.mode === 'free') { free.speed = clamp(free.speed * Math.exp(-px * 0.0015), 0.5, 60); return; } // scroll sets the free camera's speed
   zoom(Math.exp(px * 0.0012));
 }, { passive: false });
 
@@ -611,19 +663,21 @@ function autopilot(dt) {
 
 // Smooth acceleration, gentle slowdown, and turning that eases in and out.
 function fly(dt) {
-  const on = k => (keys.has(k) ? 1 : 0);
+  const on = k => held(FLIGHT_KEYS, keys, k);
   const live = view.mode === 'outside';
   let ahead = live ? on('fwd') - on('back') : 0, turnIn = live ? on('left') - on('right') : 0, climbIn = live ? on('up') - on('down') : 0;
   const outside = view.mode === 'outside';
-  const steering = keys.size > 0 && outside;   // keys pressed while inside wait until the camera is back out
+  const steering = (on('fwd') || on('back') || on('left') || on('right') || on('up') || on('down')) > 0 && outside;
+  const boost = live && on('boost') ? 1.8 : 1;   // Shift: a faster top speed and a harder push   // keys pressed while inside wait until the camera is back out
   // Any key takes over at once; letting go hands back to the autopilot after a few quiet seconds.
   auto.idle = steering || flight.turnTo !== null ? 0 : auto.idle + dt;
+  if (on('boost') && live && ahead > 0) thrustBoost = 1; else thrustBoost = 0;
   if (steering) { auto.active = false; auto.state = 'pick'; auto.heading = null; }
   else if (!auto.active && auto.idle > AUTO_AFTER && !reduced && outside) auto.active = true;
   if (reduced || !outside) auto.active = false;   // inside, the ship stays put
   if (!outside) insideLife(dt);
   const before = flight.speed;
-  let cruising = false, thrust = ahead > 0 ? 1 : 0;
+  let cruising = false, thrust = ahead > 0 ? Math.min(1, 0.8 + 0.2 * thrustBoost) : 0;
   // Until the pilot is back in the seat, the ship only speeds up gently, so nobody gets left behind.
   const limit = ship.atControls ? 1 : 0.2;
   if (auto.active) {
@@ -633,12 +687,13 @@ function fly(dt) {
     flight.speed += clamp(want - flight.speed, -rate * dt, rate * dt);
     turnIn = a.turn; climbIn = a.climb;
     thrust = want > flight.speed + 0.5 ? 0.9 : flight.speed > 2 ? 0.35 : 0;
-  } else if (ahead > 0) flight.speed = Math.min(MAX_SPEED * limit, flight.speed + (flight.speed < 0 ? 24 : 12 + 6 * (1 - flight.speed / MAX_SPEED)) * dt);
+  } else if (ahead > 0) flight.speed = Math.min(MAX_SPEED * limit * boost, flight.speed + (flight.speed < 0 ? 24 : (12 + 6 * Math.max(0, 1 - flight.speed / MAX_SPEED)) * boost) * dt);
+  else if (flight.speed > MAX_SPEED * limit * boost) flight.speed = Math.max(MAX_SPEED * limit * boost, flight.speed - 9 * dt); // ease down after a boost
   else if (ahead < 0) flight.speed = Math.max(-MAX_BACK, flight.speed - (flight.speed > 0 ? 24 : 7) * dt);
   else { flight.speed *= Math.exp(-dt * 1.1); if (Math.abs(flight.speed) < 0.02) flight.speed = 0; }
   flight.accel = (flight.speed - before) / Math.max(dt, 1e-4);
   let want = turnIn * TURN_RATE * (ship.atControls ? 1 : 0.5);
-  if (flight.turnTo !== null && !keys.size) {
+  if (flight.turnTo !== null && !steering) {
     const diff = wrapAngle(flight.turnTo - flight.yaw);
     want = clamp(diff * 2, -TURN_RATE, TURN_RATE);
     if (Math.abs(diff) < 0.004) flight.turnTo = null;
@@ -653,7 +708,7 @@ function fly(dt) {
   keepClear(ship.root.position, ship.radius + 2);
   ship.update(dt, { thrust, flying: steering, cruising: cruising || (auto.active && Math.abs(flight.speed) > 1), stopped: Math.abs(flight.speed) < 1,
     visible: shipOnScreen(), turn: clamp(flight.yawVel / TURN_RATE, -1, 1), turnVel: flight.yawVel,
-    accel: flight.accel, speedFrac: Math.min(1, Math.abs(flight.speed) / CRUISE), reduced });
+    accel: flight.accel, speedFrac: Math.min(1, Math.abs(flight.speed) / CRUISE), climb: flight.climb / MAX_CLIMB, reduced });
 }
 
 // Outside: third person, behind, above and a little to the side, following with a slight lag and easing back after a drag.
@@ -667,6 +722,21 @@ function cameraTargets(out) {
   return out;
 }
 function follow(dt) {
+  if (view.mode === 'free') {
+    const f = a => held(FREE_KEYS, freeKeys, a), sp = free.speed * (f('fast') ? 3 : 1) * dt, cp = Math.cos(free.pitch);
+    camDir.set(-Math.sin(free.yaw) * cp, Math.sin(free.pitch), -Math.cos(free.yaw) * cp);
+    free.pos.addScaledVector(camDir, (f('fwd') - f('back')) * sp);
+    free.pos.x += Math.cos(free.yaw) * (f('right') - f('left')) * sp; free.pos.z -= Math.sin(free.yaw) * (f('right') - f('left')) * sp;
+    free.pos.y += (f('up') - f('down')) * sp;
+    keepClear(free.pos, 0.5);                                     // never inside a planet, never lost in the void
+    if (free.pos.distanceTo(ship.root.position) > 160) free.pos.sub(ship.root.position).setLength(160).add(ship.root.position);
+    camera.position.copy(free.pos); camera.rotation.set(free.pitch, free.yaw, 0, 'YXZ');
+    // The cut stays on one side; it only moves to the other side once the camera is well clear of the hull over there.
+    camLocal.copy(free.pos).sub(ship.root.position).applyQuaternion(qInv.copy(ship.root.quaternion).invert());
+    if (Math.abs(camLocal.x) > 7 && Math.sign(camLocal.x) !== free.side) { free.side = Math.sign(camLocal.x); ship.setCutSide(free.side); }
+    ship.setView(camera);
+    return;
+  }
   const target = cameraTargets(tmpV);
   if (view.mode === 'entering' || view.mode === 'leaving') {
     view.t = reduced ? 1 : Math.min(1, view.t + dt / GLIDE);
@@ -676,7 +746,8 @@ function follow(dt) {
     chase.pitch = f.pitch + (to.pitch - f.pitch) * e;
     pivot.copy(f.pivot).lerp(target, e);
     look = view.mode === 'entering' ? 1 - e : e;   // the outside view looks a little ahead of the ship; inside looks at its centre
-    if (view.t >= 1) { view.mode = view.mode === 'entering' ? 'inside' : 'outside'; chase.tDist = chase.dist; updateLookBtn(); }
+    if (view.closeLate && view.t > 0.5 && ship.openTarget) ship.setOpen(false);   // leaving the free camera: close once clear of the hull
+    if (view.t >= 1) { if (view.mode === 'leaving') ship.setCutSide(null); view.mode = view.mode === 'entering' ? 'inside' : 'outside'; chase.tDist = chase.dist; updateLookBtn(); }
   } else {
     if (view.mode === 'outside' && !chase.dragging) {
       const k = reduced ? 1 : 1 - Math.exp(-dt * 2.2);
@@ -702,7 +773,7 @@ function follow(dt) {
   ship.setView(camera);
 }
 // While the camera is inside, the ship hovers in place and the pilot keeps living their life.
-let lifeT = 0, look = 1;
+let lifeT = 0, look = 1, thrustBoost = 0;
 function insideLife(dt) {
   flight.speed *= Math.exp(-dt * 3); if (Math.abs(flight.speed) < 0.05) flight.speed = 0;
   flight.climb *= Math.exp(-dt * 3);

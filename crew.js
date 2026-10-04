@@ -16,25 +16,38 @@ export const ACTIVITIES = [
   { id: 'workbench', steps: [{ spot: 'bench', anim: 'work', time: [8, 12], mood: 'determined' }] },
   { id: 'desk', steps: [{ spot: 'desk', anim: 'write', time: [8, 12] }] },
   { id: 'starmap', steps: [{ spot: 'navtable', anim: 'study', time: [6, 9] }] },
-  { id: 'tidy', steps: [{ spot: 'junk', anim: 'tidy', time: [8, 12], mood: 'determined' }] },
+  { id: 'tidy', steps: [{ spot: 'storage', anim: 'tidy', time: [8, 12], mood: 'determined' }] },
+  // Down the ladder to the bottom deck: read the fuel gauges, then check the data racks.
+  { id: 'shipcheck', steps: [{ spot: 'fuel', anim: 'study', time: [5, 8] }, { spot: 'servers', anim: 'study', time: [5, 8], mood: 'determined' }] },
   // The science lab, at the back of the upper deck.
   { id: 'experiment', steps: [{ spot: 'labBench', anim: 'experiment', time: [8, 12], props: ['bubbles'], mood: 'determined' }] },
   { id: 'microscope', steps: [{ spot: 'microscope', anim: 'microscope', time: [7, 11], mood: 'surprised' }] },
   { id: 'whiteboard', steps: [{ spot: 'whiteboard', anim: 'board', time: [8, 12] }] },
 ];
 
-const WALK = 1.3, HURRY = 2.8, CLIMB = 0.75, CLIMB_HURRY = 1.5; // meters per second
+const WALK = 1.3, HURRY = 2.8, STEP_ON = 0.6;  // meters per second; STEP_ON is stepping on and off a ladder
+const RUNG_TIME = 0.55, RUNG_HURRY = 0.32;   // seconds per rung
 const IDLE_PAUSE = 3;      // seconds stopped before the pilot gets up
 const REST = [6, 12];      // seconds in the pilot seat between activities
 const COOLDOWN = 45;       // an activity won't be picked again this soon after it ended
 const rand = ([a, b]) => a + Math.random() * (b - a);
 
-// layout: { nodes: { id: { pos: [x, y, z], links: [ids] } }, climbs: [[topId, bottomId]],
-//           spots: { id: { node, pos, yaw, anim } } } with a 'seat' spot for flying.
+// layout: { nodes: { id: { pos: [x, y, z], links: [ids] } }, spots: { id: { node, pos, yaw, anim } } with a 'seat' spot,
+//           ladders: [{ topLand, top, bottom, bottomLand, yaw, rung }] }.
+// On a ladder the pilot always faces it (yaw): turn to face it on the landing, step on (backwards at the top, forwards at
+// the bottom), climb one rung at a time with hands and feet alternating, then step off. Every ladder works the same way.
 // props: { name: object3D } shown only during the steps that list them.
 export function makeCrew({ pilot, layout, props = {} }) {
   const P = id => new THREE.Vector3(...layout.nodes[id].pos);
-  const climbs = new Set(layout.climbs.flatMap(([a, b]) => [a + '>' + b, b + '>' + a]));
+  const segs = {};                       // 'a>b' -> { kind: 'mount' | 'climb' | 'dismount', L }
+  for (const L of layout.ladders || []) {
+    Object.assign(segs, { [L.top + '>' + L.bottom]: { kind: 'climb', L }, [L.bottom + '>' + L.top]: { kind: 'climb', L },
+      [L.topLand + '>' + L.top]: { kind: 'mount', L }, [L.bottomLand + '>' + L.bottom]: { kind: 'mount', L },
+      [L.top + '>' + L.topLand]: { kind: 'dismount', L }, [L.bottom + '>' + L.bottomLand]: { kind: 'dismount', L } });
+  }
+  // Waypoint ids -> path entries, each knowing how it is reached from the one before.
+  const entries = (from, ids) => ids.map((id, i) => ({ p: P(id), id, ...(segs[(i ? ids[i - 1] : from) + '>' + id] || { kind: 'walk' }) }));
+  let climbPose = { phase: 0, parity: 0, dir: 1 }, turning = false;
   const seat = layout.spots.seat;
   const root = pilot.group;
 
@@ -69,7 +82,7 @@ export function makeCrew({ pilot, layout, props = {} }) {
   // Walk from the current spot, along the waypoints, into the next spot.
   function goTo(next, fast) {
     const ids = route(node, next.node);
-    path = [{ p: root.position.clone() }, ...ids.map((id, i) => ({ p: P(id), id, climb: i > 0 && climbs.has(ids[i - 1] + '>' + id) })), { p: new THREE.Vector3(...next.pos), id: next.node }];
+    path = [{ p: root.position.clone() }, ...entries(null, ids), { p: new THREE.Vector3(...next.pos), id: next.node, kind: 'walk' }];
     seg = 0; segT = 0; hurry = fast; spot = next; mode = 'moving'; showProps([]);
   }
   function startStep() {
@@ -130,7 +143,7 @@ export function makeCrew({ pilot, layout, props = {} }) {
           const to = path[seg + 1];
           node = to?.id || node;
           const ids = route(node, seat.node);
-          path = [{ p: root.position.clone() }, ...(to ? [to] : []), ...ids.slice(1).map((id, i, arr) => ({ p: P(id), id, climb: climbs.has((i ? arr[i - 1] : node) + '>' + id) })), { p: new THREE.Vector3(...seat.pos), id: seat.node }];
+          path = [{ p: root.position.clone() }, ...(to ? [to] : []), ...entries(node, ids.slice(1)), { p: new THREE.Vector3(...seat.pos), id: seat.node, kind: 'walk' }];
           seg = 0; segT = 0; hurry = true; spot = seat; showProps([]);
         } else { goTo(seat, true); }
       }
@@ -147,27 +160,45 @@ export function makeCrew({ pilot, layout, props = {} }) {
       if (mode === 'moving') {
         const a = path[seg], b = path[seg + 1];
         if (!b) { arrive(); }
-        else {
+        else if (b.kind === 'climb') {
+          // One rung at a time: the body rises (or lowers) a rung per step, easing in and out, with the limbs alternating.
+          const dir = Math.sign(b.p.y - a.p.y), n = Math.max(1, Math.round(Math.abs(b.p.y - a.p.y) / b.L.rung));
+          segT = Math.min(1, segT + dt / (n * (hurry ? RUNG_HURRY : RUNG_TIME)));
+          const steps = segT * n, k = Math.min(n - 1, Math.floor(steps)), f = segT >= 1 ? 1 : steps - k, e = f * f * (3 - 2 * f);
+          root.position.set(a.p.x, a.p.y + dir * b.L.rung * (k + e), a.p.z);
+          root.rotation.y = b.L.yaw; anim = 'climb'; climbPose = { phase: f, parity: k % 2, dir };
+          if (segT >= 1) { root.position.copy(b.p); seg++; segT = 0; node = b.id; }
+        } else if (b.kind === 'mount' || b.kind === 'dismount') {
+          // Face the ladder first (on the landing), then step on or off it slowly, hands on the rails.
+          const diff = Math.atan2(Math.sin(b.L.yaw - root.rotation.y), Math.cos(b.L.yaw - root.rotation.y));
+          if (b.kind === 'mount' && Math.abs(diff) > 0.03 && segT === 0) {
+            root.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), dt * 3.2); anim = 'stand'; turning = true;
+          } else {
+            turning = false; root.rotation.y = b.L.yaw;
+            const len = a.p.distanceTo(b.p) || 1e-3;
+            segT = Math.min(1, segT + dt * STEP_ON * (hurry ? 1.6 : 1) / len);
+            const e = segT * segT * (3 - 2 * segT);
+            root.position.lerpVectors(a.p, b.p, e);
+            anim = 'climb'; climbPose = { phase: 0, parity: 0, dir: b.p.y === a.p.y && b.kind === 'mount' ? (b.id === b.L.top ? -1 : 1) : 1 };
+            if (segT >= 1) { seg++; segT = 0; node = b.id; }
+          }
+        } else {
           const len = a.p.distanceTo(b.p) || 1e-3;
-          const speed = b.climb ? (hurry ? CLIMB_HURRY : CLIMB) : (hurry ? HURRY : WALK);
-          segT = Math.min(1, segT + dt * speed / len);
+          segT = Math.min(1, segT + dt * (hurry ? HURRY : WALK) / len);
           root.position.lerpVectors(a.p, b.p, segT);
-          if (b.climb) { anim = 'climb'; root.rotation.y = layout.climbYaw; }
-          else {
-            anim = 'walk';
-            const dx = b.p.x - a.p.x, dz = b.p.z - a.p.z;
-            if (dx * dx + dz * dz > 1e-4) {
-              const want = Math.atan2(-dx, -dz);
-              const diff = Math.atan2(Math.sin(want - root.rotation.y), Math.cos(want - root.rotation.y));
-              root.rotation.y += diff * (1 - Math.exp(-dt * 12));
-            }
+          anim = 'walk';
+          const dx = b.p.x - a.p.x, dz = b.p.z - a.p.z;
+          if (dx * dx + dz * dz > 1e-4) {
+            const want = Math.atan2(-dx, -dz);
+            const diff = Math.atan2(Math.sin(want - root.rotation.y), Math.cos(want - root.rotation.y));
+            root.rotation.y += diff * (1 - Math.exp(-dt * 12));
           }
           if (segT >= 1) { seg++; segT = 0; if (b.id) node = b.id; }
         }
       }
 
       const look = mode === 'seated' ? (glanceFor > 0 && !reduced ? -2.2 : turn) : 0;
-      pilot.update(dt, { anim, mood, turn: look, accel, stride: hurry ? 10 : 7, reduced });
+      pilot.update(dt, { anim, mood, turn: look, accel, stride: hurry ? 10 : 7, climb: climbPose, reduced });
     },
   };
 }

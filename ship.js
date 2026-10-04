@@ -13,16 +13,17 @@ import { buildInterior } from './interior.js';
 import { buildExterior } from './exterior.js';
 import { halfWidth, zRange, onHull } from './hull.js';
 
-export const SHIP_COLORS = { main: '#F3EADB', secondary: '#3FA7B5', accent: '#FF7A59' };
+// The outside is rugged and rustic: weathered khaki and olive panels, rust, charcoal trim, a few burnt-orange accents.
+export const SHIP_COLORS = { main: '#9A9470', secondary: '#5E6447', accent: '#B4592C', rust: '#7A4528', trim: '#2E3032' };
 const PI = Math.PI;
 // Interior, in meters: lower floor at 0, its ceiling at 3; upper floor at 3.5, its ceiling at 6.5.
 const S = 0.456, Y0 = -2.3;
 const LOW = 0, UP = 3.5, CEIL = 6.5;
 const ROOF_Y = Y0 + (CEIL - 0.1) * S;        // where the roof is cut when open (just under the upper ceiling)
 const toY = h => Y0 + h * S;
-// Porthole positions along the hull (world units), placed where the rooms inside have free wall: bathroom, galley and
-// lounge on the lower deck; the control room and the science lab on the upper deck.
-const LOW_WINDOWS = [-3.352, -2.098, 0.137], UP_WINDOWS = [-3.466, -0.73, 0.638];
+// Porthole positions along the hull (world units), placed where the rooms inside have free wall: bathroom, galley,
+// lounge (over the desk) and the science lab on the lower deck; the bridge on the upper deck.
+const LOW_WINDOWS = [-3.352, -2.098, 0.137, 1.368], UP_WINDOWS = [-3.466];
 // Landing-gear wells in the belly (world units, x is the distance from the centre line).
 const BAYS = [{ z0: -5.05, z1: -2.4, x0: 0.7, x1: 1.85 }, { z0: 2.55, z1: 5.2, x0: 0.7, x1: 1.85 }];
 
@@ -99,7 +100,7 @@ export function makeShip(colors = SHIP_COLORS) {
     for (const z of UP_WINDOWS) windows.push({ side, y: toY(5.1), z });    // upper deck
   }
   const outside = buildExterior(body, { C, hullMat, solid, basic, geo, mesh, makeBatch, T, cutPlanes, windows, windowR: 0.3, bays: BAYS,
-    airlockY: toY(1.25), airlockZ: 7.4 * S });
+    airlockY: toY(1.25), airlockZ: 9.5 * S });
   const runningLights = outside.runningLights;
   // Ship name on both sides of the lower hull, and the registration up by the nose.
   for (const side of [-1, 1]) {
@@ -175,14 +176,14 @@ export function makeShip(colors = SHIP_COLORS) {
   nameDecalsUpdate();
 
   // ---------- The cutaway: open (1) slides the near hull and roof away; closed (0) is a solid ship ----------
-  let open = 0, openTarget = 0;
+  let open = 0, openTarget = 0, cutSide = null;
   const center = new THREE.Vector3(), up = new THREE.Vector3(), toShip = new THREE.Vector3(), qBody = new THREE.Quaternion();
   function setView(camera) {
     body.updateMatrixWorld();
     center.setFromMatrixPosition(body.matrixWorld);
     up.set(0, 1, 0).applyQuaternion(body.getWorldQuaternion(qBody));
-    toShip.copy(center).sub(camera.position);
-    toShip.addScaledVector(up, -toShip.dot(up)).normalize();
+    if (cutSide) toShip.set(-cutSide, 0, 0).applyQuaternion(qBody);    // free camera: the cut stays on one side of the ship
+    else { toShip.copy(center).sub(camera.position); toShip.addScaledVector(up, -toShip.dot(up)).normalize(); }
     const e = open * open * (3 - 2 * open);                        // smoothstep, so the panels ease in and out
     const sideCut = (1 - e) * 30, roofCut = ROOF_Y + (1 - e) * 30; // closed: far outside the ship (nose to engine), so nothing is clipped
     cutPlanes[0].setFromNormalAndCoplanarPoint(toShip, center.clone().addScaledVector(toShip, -sideCut));
@@ -192,7 +193,7 @@ export function makeShip(colors = SHIP_COLORS) {
   // ---------- Every frame ----------
   let t = 0, flameLevel = 0, blinkT = 0;
   const tmp = new THREE.Vector3(), anchor = new THREE.Vector3(), tail = new THREE.Vector3();
-  function update(dt, { thrust = 0, flying = false, cruising = false, stopped = true, turn = 0, turnVel = 0, accel = 0, speedFrac = 0, visible = true, reduced = false } = {}) {
+  function update(dt, { thrust = 0, flying = false, cruising = false, stopped = true, turn = 0, turnVel = 0, accel = 0, speedFrac = 0, climb = 0, visible = true, reduced = false } = {}) {
     t += dt;
     open += (openTarget - open) * (reduced ? 1 : 1 - Math.exp(-dt * 3.5));
     if (Math.abs(openTarget - open) < 0.001) open = openTarget;
@@ -204,12 +205,12 @@ export function makeShip(colors = SHIP_COLORS) {
     flameGlow.material.opacity = 0.9 * flameLevel;
     coreMat.color.lerpColors(CORE_COLD, CORE_HOT, Math.min(1, flameLevel * 1.2));
     for (const g of outside.nacelleGlow) g.material.color.copy(coreMat.color);
-    outside.updateGear(dt, { moving: flying || cruising || !stopped, reduced });
+    outside.updateGear(dt, { reduced });
 
     body.position.y = reduced ? 0 : Math.sin(t * 1.0) * 0.2 * (1 - speedFrac);
     const k = reduced ? 1 : 1 - Math.exp(-dt * 3);
     body.rotation.z += (turnVel * 0.3 - body.rotation.z) * k;
-    body.rotation.x += (-Math.max(0, accel) * 0.002 - body.rotation.x) * k;
+    body.rotation.x += (climb * 0.09 - Math.max(0, accel) * 0.002 - body.rotation.x) * k;   // nose up when climbing, down when descending
 
     blinkT += dt;
     runningLights.forEach((l, i) => { const on = reduced || ((blinkT + i * 0.4) % 2) < 1.4; l.visible = on || i === 2; });
@@ -244,9 +245,14 @@ export function makeShip(colors = SHIP_COLORS) {
   const headPos = new THREE.Vector3();
   return {
     root, body, pilot, crew, gear: outside, world: [trail, towPod.group, tether], radius: 9.5, setMoney, setView, update,
-    clickables: interior.clickables, blockedPaths: interior.blocked, // the dashboard screen: clicking it opens the console
+    clickables: interior.clickables, blockedPaths: interior.blocked, checkExterior: () => outside.check(), // the dashboard screen: clicking it opens the console
     // 0 = solid hull, 1 = fully open cutaway. Set the target; it eases there.
     get open() { return open; }, get openTarget() { return openTarget; }, setOpen(v) { openTarget = v ? 1 : 0; },
+    // Free camera: keep the cutaway on one side of the ship (1 = +x, -1 = -x), or null to face the camera again.
+    setCutSide(side) { cutSide = side; },
+    // Landing gear. The legs stay in their wells in flight and while hovering; landing on a planet (Phase E) will call
+    // setLandingGear(true) on final approach and setLandingGear(false) after take-off. For now the L key tests it.
+    setLandingGear(down) { outside.setGearTarget(down); }, get landingGear() { return outside.gearTarget; },
     pilotHead(target = headPos) { pilot.head.updateMatrixWorld(); return pilot.head.getWorldPosition(target); },
     get flameLevel() { return flameLevel; },
     get atControls() { return crew.atControls; },

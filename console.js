@@ -256,6 +256,16 @@ function vShip() {
       <input id="pilotName" data-f="ship-pilot" data-k="ship-pilot" maxlength="28" placeholder="Pilot" value="${esc(S.ship.pilot || '')}">
       <label class="toggle" for="towPod"><input type="checkbox" id="towPod" data-f="ship-tow" data-k="ship-tow" ${S.ship.towPod ? 'checked' : ''}>
         <span><b>Tow a debt pod behind my ship</b><small>A little pod on a line that shrinks as you pay down what you owe. Off unless you want it.</small></span></label></div>
+    <div class="panelbox"><h4>Controls</h4>
+      <dl class="controls">
+        <dt>W A S D or arrows</dt><dd>Fly forward, back, and turn</dd>
+        <dt>Space</dt><dd>Fly up</dd>
+        <dt>C or Ctrl</dt><dd>Fly down</dd>
+        <dt>Shift</dt><dd>Boost while flying forward</dd>
+        <dt>Drag / scroll</dt><dd>Look around / zoom. Zoom in close to see inside.</dd>
+        <dt>F</dt><dd>Free camera: W A S D to move, Q and E down and up, drag to look, scroll for speed, Shift to go faster. F or Esc to come back.</dd>
+      </dl>
+      <p class="note">Keys are ignored while the console is open or you're typing.</p></div>
     <div class="panelbox"><h4>Your data stays here</h4>
       <p class="note">No account and no bank connection. Everything is saved in this browser, on this computer only.</p>
       <p style="margin:14px 0 0">${isEmpty(S)

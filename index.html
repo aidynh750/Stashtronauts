@@ -19,6 +19,7 @@
   <h1>Stashtronauts</h1>
   <span class="hud-row">
   <button id="lookCloser" class="hud-btn" aria-pressed="false">Look closer</button>
+  <button id="freeCam" class="hud-btn" aria-pressed="false" title="Free camera (F)">Free camera</button>
   <button id="openConsole" class="hud-btn" aria-haspopup="dialog">
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="3"/><path d="M8 20h8"/></svg>Console
   </button>
@@ -28,6 +29,11 @@
 <p id="banner" class="banner" hidden role="status">These are example planets. <button class="link" data-open="setup">Add a savings goal</button> to see your own.</p>
 
 <p id="hello" class="banner hello" role="status" hidden></p>
+
+<!-- Shown once, on the first visit. The full list is in the console under "Ship and pilot". -->
+<aside id="hint" class="hint" hidden aria-label="Controls">
+  <b>Flying</b><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly</span><span><kbd>Space</kbd> up</span><span><kbd>C</kbd> or <kbd>Ctrl</kbd> down</span><span><kbd>Shift</kbd> boost</span><span><kbd>F</kbd> free camera</span>
+</aside>
 
 <!-- The ship console: a tablet built into the dashboard. -->
 <dialog id="console" class="console" aria-labelledby="shipLabel">

@@ -322,50 +322,87 @@ export function crateTexture() {
 
 // ---------- The lofted hull ----------
 // The canvas is split by v: belly (0-0.2, by z and x), roof (0.2-0.35, by z and x), sides (0.35-1, by z and height).
-// map(z) gives u; side(y), roof(x), belly(x) give v. windows: [{ z, y, r }] square portholes (holes in the alpha map).
-// bays: [{ z0, z1, x0, x1 }] holes in the belly for the landing-gear wells.
-export function loftTextures({ main, secondary, accent, u, side, roof, belly, windows = [], bays = [], seamsZ = [], W = 2048, H = 1024, seed = 11 }) {
+// u(z) gives u; side(y), roof(x), belly(x) give v. windows: [{ z, y, r }] square portholes (holes in the alpha map).
+// bays: [{ z0, z1, x0, x1 }] belly hatches for the landing-gear wells. hot: z range near the engines (scorch marks).
+// The paint is old and worked: mismatched replacement panels, faded and peeling paint, rust streaks and patches,
+// oil and grime runs, scratches, and scorch marks near the engines.
+export function loftTextures({ main, secondary, accent, rust = '#7A4528', trim = '#2E3032', u, side, roof, belly, windows = [], bays = [], seamsZ = [], hot = [4.6, 6.4], W = 2048, H = 1024, seed = 11 }) {
   const col = canvas(W, H), bump = canvas(W, H), rough = canvas(W / 2, H / 2), alpha = canvas(W, H);
   const c = col.getContext('2d'), b = bump.getContext('2d'), r = rough.getContext('2d'), a = alpha.getContext('2d'), rand = rng(seed);
   const X = z => u(z) * W, Y = v => (1 - v) * H;
   const band = (v0, v1, fill) => { c.fillStyle = fill; c.fillRect(0, Y(v1), W, Y(v0) - Y(v1)); };
+  const tint = (hex, k, dr = 0, dg = 0, db = 0) => { const n = parseInt(hex.slice(1), 16); const ch = (v, d) => Math.max(0, Math.min(255, Math.round(v * k + d)));
+    return `rgb(${ch(n >> 16, dr)},${ch((n >> 8) & 255, dg)},${ch(n & 255, db)})`; };
   b.fillStyle = 'rgb(128,128,128)'; b.fillRect(0, 0, W, H);
-  r.fillStyle = 'rgb(140,140,140)'; r.fillRect(0, 0, W / 2, H / 2);
+  r.fillStyle = 'rgb(175,175,175)'; r.fillRect(0, 0, W / 2, H / 2);
   a.fillStyle = '#fff'; a.fillRect(0, 0, W, H);
-  // Paint: cream body, teal lower hull and skirt, an orange pinstripe where the skirt meets the side, teal roof stripe.
+  // Base paint: khaki body, olive lower hull and skirt, a faded burnt-orange pinstripe, charcoal trim along the roof edge.
   band(side(-2.2), 1, main);
   band(0.35, side(-2.2), secondary);
-  band(side(-2.25), side(-2.08), accent);
-  band(side(0.86), side(0.97), secondary);
-  band(0.2, 0.35, main);
-  for (const x of [-0.25, 0.25]) band(roof(x) - 0.004, roof(x) + 0.004, secondary);
-  band(0, 0.2, '#56707C');
-  // Plates: staggered rectangles with slightly different shades, seams and rivets, on each region.
-  const plates = (v0, v1, rows, w, shade) => {
+  band(side(-2.25), side(-2.1), tint(accent, 0.85));
+  band(side(0.86), side(0.95), trim);
+  band(0.2, 0.35, tint(main, 0.92));
+  for (const x of [-0.25, 0.25]) band(roof(x) - 0.004, roof(x) + 0.004, trim);
+  band(0, 0.2, tint(secondary, 0.72));
+  // Panels: staggered plates. Some are replacements in a slightly different shade; some have lost their paint.
+  const plates = (v0, v1, rows, w, base) => {
     const h = (Y(v0) - Y(v1)) / rows;
     for (let row = 0; row < rows; row++) {
       const y0 = Y(v1) + row * h, off = (row % 2) * w / 2;
       for (let x = -off; x < W; x += w) {
         const k = rand();
-        if (k < 0.35) { c.fillStyle = `rgba(${shade},${0.03 + rand() * 0.06})`; c.fillRect(x + 2, y0 + 2, w - 4, h - 4); }
-        for (const g of [c, b]) { g.strokeStyle = g === c ? 'rgba(40,50,70,0.35)' : 'rgb(60,60,60)'; g.lineWidth = g === c ? 2 : 3; g.strokeRect(x, y0, w, h); }
+        if (k < 0.14) { c.fillStyle = tint(base(y0 + h / 2), 0.86 + rand() * 0.2, rand() * 12 - 4, rand() * 10 - 2, -rand() * 8); c.fillRect(x + 2, y0 + 2, w - 4, h - 4); } // replacement panel
+        else if (k < 0.2) { c.fillStyle = tint(rust, 0.95 + rand() * 0.2); c.fillRect(x + 2, y0 + 2, w - 4, h - 4); }                                 // a rusty patch panel
+        else if (k < 0.5) { c.fillStyle = `rgba(${rand() < 0.5 ? '30,28,20' : '230,225,200'},${0.03 + rand() * 0.06})`; c.fillRect(x + 2, y0 + 2, w - 4, h - 4); }
+        for (const g of [c, b]) { g.strokeStyle = g === c ? 'rgba(25,22,18,0.5)' : 'rgb(55,55,55)'; g.lineWidth = g === c ? 2 : 3; g.strokeRect(x, y0, w, h); }
         for (let i = 0; i < 4; i++) for (const [px, py] of [[x + 7 + i * (w - 14) / 3, y0 + 6], [x + 7 + i * (w - 14) / 3, y0 + h - 6]]) {
-          c.fillStyle = 'rgba(60,70,90,0.4)'; c.beginPath(); c.arc(px, py, 2, 0, 7); c.fill();
+          c.fillStyle = 'rgba(40,35,28,0.55)'; c.beginPath(); c.arc(px, py, 2, 0, 7); c.fill();
           b.fillStyle = 'rgb(205,205,205)'; b.beginPath(); b.arc(px, py, 2.4, 0, 7); b.fill();
+          if (rand() < 0.12) { const g = c.createLinearGradient(px, py, px, py + 40 + rand() * 60); g.addColorStop(0, 'rgba(120,60,25,0.5)'); g.addColorStop(1, 'rgba(120,60,25,0)'); c.fillStyle = g; c.fillRect(px - 2, py, 4, 100); } // rust bleeding from a rivet
         }
       }
     }
   };
-  plates(0.35, 1, 9, 118, '40,50,60');
-  plates(0.2, 0.35, 3, 150, '40,50,60');
-  plates(0, 0.2, 4, 170, '20,30,40');
-  // Section joints: heavier seams where the hull sections meet.
-  for (const z of seamsZ) for (const g of [c, b]) { g.fillStyle = g === c ? 'rgba(40,50,70,0.45)' : 'rgb(40,40,40)'; g.fillRect(X(z) - 4, 0, 8, H); }
-  // Belly: hazard-striped edges and holes for the landing-gear wells, plus a few service hatches and vent grilles.
+  const sideBase = py => py > Y(side(-2.2)) ? secondary : main;
+  plates(0.35, 1, 9, 118, sideBase);
+  plates(0.2, 0.35, 3, 150, () => main);
+  plates(0, 0.2, 4, 170, () => secondary);
+  for (const z of seamsZ) for (const g of [c, b]) { g.fillStyle = g === c ? 'rgba(25,22,18,0.6)' : 'rgb(40,40,40)'; g.fillRect(X(z) - 4, 0, 8, H); }
+  // Faded, chalky paint in broad patches (sun-bleached), and peeling paint showing grey primer and bare metal.
+  for (let i = 0; i < 90; i++) {
+    const x = rand() * W, y = rand() * H, s = 30 + rand() * 120, g = c.createRadialGradient(x, y, 0, x, y, s);
+    g.addColorStop(0, `rgba(215,210,185,${0.05 + rand() * 0.08})`); g.addColorStop(1, 'rgba(215,210,185,0)'); c.fillStyle = g; c.fillRect(x - s, y - s, s * 2, s * 2);
+  }
+  const blob = (x, y, s, fill, g2 = null, k = 0) => { c.fillStyle = fill; c.beginPath(); for (let i = 0; i < 14; i++) { const t = i / 14 * 6.283, rr = s * (0.55 + rand() * 0.6); c.lineTo(x + Math.cos(t) * rr, y + Math.sin(t) * rr * 0.7); } c.closePath(); c.fill();
+    if (g2) { g2.fillStyle = `rgb(${k},${k},${k})`; g2.beginPath(); for (let i = 0; i < 14; i++) { const t = i / 14 * 6.283, rr = s * (0.5 + rand() * 0.6); g2.lineTo(x / (g2 === r ? 2 : 1) + Math.cos(t) * rr / (g2 === r ? 2 : 1), y / (g2 === r ? 2 : 1) + Math.sin(t) * rr * 0.7 / (g2 === r ? 2 : 1)); } g2.closePath(); g2.fill(); } };
+  for (let i = 0; i < 70; i++) { const x = rand() * W, y = rand() * H * 0.98, s = 6 + rand() * 22; blob(x, y, s * 1.25, 'rgba(25,22,18,0.35)'); blob(x, y, s, rand() < 0.6 ? '#8C8A80' : '#A6A39A', b, 110); } // peeled paint (with an edge)
+  // Rust: patches and long streaks running down from seams and openings.
+  for (let i = 0; i < 55; i++) { const x = rand() * W, y = rand() * H, s = 5 + rand() * 20; blob(x, y, s, tint(rust, 0.8 + rand() * 0.4)); blob(x + 2, y + 1, s * 0.5, tint(rust, 0.55)); blob(x, y, s, null || tint(rust, 0.9), r, 230); }
+  for (let i = 0; i < 160; i++) {
+    const x = rand() * W, y = rand() * H * 0.9, len = 30 + rand() * 160, w = 2 + rand() * 6, g = c.createLinearGradient(x, y, x, y + len);
+    g.addColorStop(0, `rgba(${rand() < 0.75 ? '125,62,26' : '35,30,24'},${0.25 + rand() * 0.35})`); g.addColorStop(1, 'rgba(120,60,25,0)');
+    c.fillStyle = g; c.fillRect(x, y, w, len);
+  }
+  // Oil and grime runs: darker drips, heavier low down on the sides and under the vents.
+  for (let i = 0; i < 70; i++) { const x = rand() * W, y = Y(side(-0.6 + rand() * 1.8)), len = 40 + rand() * 120, g = c.createLinearGradient(x, y, x, y + len);
+    g.addColorStop(0, 'rgba(20,18,14,0.45)'); g.addColorStop(1, 'rgba(20,18,14,0)'); c.fillStyle = g; c.fillRect(x, y, 3 + rand() * 5, len); }
+  const grime = c.createLinearGradient(0, Y(side(-1.6)), 0, Y(0.35));
+  grime.addColorStop(0, 'rgba(30,26,18,0)'); grime.addColorStop(1, 'rgba(30,26,18,0.45)');
+  c.fillStyle = grime; c.fillRect(0, Y(side(-1.6)), W, Y(0.35) - Y(side(-1.6)));
+  // Scratches: thin bright lines through the paint.
+  c.lineWidth = 1;
+  for (let i = 0; i < 260; i++) { const x = rand() * W, y = rand() * H, l = 10 + rand() * 70, ang = (rand() - 0.5) * 0.9;
+    c.strokeStyle = `rgba(${rand() < 0.5 ? '205,200,185' : '60,55,45'},${0.3 + rand() * 0.4})`; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(ang) * l, y + Math.sin(ang) * l); c.stroke();
+    b.strokeStyle = 'rgb(105,105,105)'; b.beginPath(); b.moveTo(x, y); b.lineTo(x + Math.cos(ang) * l, y + Math.sin(ang) * l); b.stroke(); }
+  // Scorch marks near the engines: soot fading forward from the back of the hull.
+  const sx0 = X(hot[0]), sx1 = X(hot[1]), soot = c.createLinearGradient(sx0, 0, sx1, 0);
+  soot.addColorStop(0, 'rgba(15,12,10,0)'); soot.addColorStop(1, 'rgba(15,12,10,0.7)'); c.fillStyle = soot; c.fillRect(sx0, 0, sx1 - sx0, H);
+  for (let i = 0; i < 30; i++) { const x = sx0 + rand() * (sx1 - sx0), y = rand() * H, s = 20 + rand() * 60, g = c.createRadialGradient(x, y, 0, x, y, s); g.addColorStop(0, 'rgba(10,8,6,0.4)'); g.addColorStop(1, 'rgba(10,8,6,0)'); c.fillStyle = g; c.fillRect(x - s, y - s, s * 2, s * 2); }
+  // Belly: hazard-striped hatches over the gear wells (the wells are behind them), service hatches and vent grilles.
   const hazard = (x, y, w, h) => {
-    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); c.fillStyle = '#F5C542'; c.fillRect(x, y, w, h); c.fillStyle = '#2B3550';
+    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); c.fillStyle = '#B8962E'; c.fillRect(x, y, w, h); c.fillStyle = '#26241F';
     for (let k = -h; k < w + h; k += 24) { c.beginPath(); c.moveTo(x + k, y); c.lineTo(x + k + 12, y); c.lineTo(x + k + 12 + h, y + h); c.lineTo(x + k + h, y + h); c.fill(); }
-    c.restore();
+    c.fillStyle = 'rgba(40,30,20,0.35)'; c.fillRect(x, y, w, h); c.restore();
   };
   for (const s of [-1, 1]) for (const bay of bays) {
     const x0 = X(bay.z0), x1 = X(bay.z1), ya = Y(belly(s * bay.x0)), yb = Y(belly(s * bay.x1)), y0 = Math.min(ya, yb), y1 = Math.max(ya, yb);
@@ -375,35 +412,43 @@ export function loftTextures({ main, secondary, accent, u, side, roof, belly, wi
   }
   for (const [z, x, w, h] of [[-4.6, 0, 0.9, 0.7], [-0.6, -0.9, 0.7, 0.6], [0.8, 0.5, 1.2, 0.8], [5.3, 0, 0.8, 0.8]]) {
     const x0 = X(z - w / 2), x1 = X(z + w / 2), y0 = Y(belly(x + h / 2)), y1 = Y(belly(x - h / 2));
-    c.fillStyle = '#6B8592'; c.fillRect(x0, y0, x1 - x0, y1 - y0);
-    for (const g of [c, b]) { g.strokeStyle = g === c ? 'rgba(25,30,40,0.6)' : 'rgb(40,40,40)'; g.lineWidth = 4; g.strokeRect(x0, y0, x1 - x0, y1 - y0); }
+    c.fillStyle = tint(secondary, 0.62); c.fillRect(x0, y0, x1 - x0, y1 - y0);
+    for (const g of [c, b]) { g.strokeStyle = g === c ? 'rgba(20,18,14,0.7)' : 'rgb(40,40,40)'; g.lineWidth = 4; g.strokeRect(x0, y0, x1 - x0, y1 - y0); }
   }
   for (const [z, x] of [[-2.0, 0.6], [-2.0, -0.6], [3.0, 0], [-5.8, 0.9], [-5.8, -0.9]]) {
     const x0 = X(z - 0.35), y0 = Y(belly(x + 0.25)), w = X(z + 0.35) - x0, h = Y(belly(x - 0.25)) - y0;
-    c.fillStyle = '#2B3550'; c.fillRect(x0, y0, w, h);
-    for (let k = 4; k < w - 4; k += 9) { c.fillStyle = '#7C8597'; c.fillRect(x0 + k, y0 + 3, 4, h - 6); b.fillStyle = 'rgb(200,200,200)'; b.fillRect(x0 + k, y0 + 3, 4, h - 6); }
+    c.fillStyle = trim; c.fillRect(x0, y0, w, h);
+    for (let k = 4; k < w - 4; k += 9) { c.fillStyle = '#6E6A60'; c.fillRect(x0 + k, y0 + 3, 4, h - 6); b.fillStyle = 'rgb(200,200,200)'; b.fillRect(x0 + k, y0 + 3, 4, h - 6); }
   }
-  // Square portholes: a hole with a raised, bolted frame.
+  // Square portholes: a hole with a raised, bolted frame, and a rust stain running from the bottom corners.
   for (const w of windows) {
     const x0 = X(w.z - w.r), x1 = X(w.z + w.r), y0 = Y(side(w.y + w.r)), y1 = Y(side(w.y - w.r)), m = 14;
-    c.fillStyle = '#AEB7C8'; c.beginPath(); c.roundRect(x0 - m, y0 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m, 14); c.fill();
+    c.fillStyle = '#5E5C55'; c.beginPath(); c.roundRect(x0 - m, y0 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m, 14); c.fill();
     b.fillStyle = 'rgb(215,215,215)'; b.beginPath(); b.roundRect(x0 - m, y0 - m, x1 - x0 + 2 * m, y1 - y0 + 2 * m, 14); b.fill();
-    c.fillStyle = '#6E7689'; for (const [px, py] of [[x0 - 7, y0 - 7], [x1 + 7, y0 - 7], [x0 - 7, y1 + 7], [x1 + 7, y1 + 7], [(x0 + x1) / 2, y0 - 7], [(x0 + x1) / 2, y1 + 7]]) { c.beginPath(); c.arc(px, py, 3, 0, 7); c.fill(); }
+    c.fillStyle = '#3B3A35'; for (const [px, py] of [[x0 - 7, y0 - 7], [x1 + 7, y0 - 7], [x0 - 7, y1 + 7], [x1 + 7, y1 + 7], [(x0 + x1) / 2, y0 - 7], [(x0 + x1) / 2, y1 + 7]]) { c.beginPath(); c.arc(px, py, 3, 0, 7); c.fill(); }
+    for (const px of [x0, x1]) { const g = c.createLinearGradient(px, y1, px, y1 + 90); g.addColorStop(0, 'rgba(125,62,26,0.6)'); g.addColorStop(1, 'rgba(125,62,26,0)'); c.fillStyle = g; c.fillRect(px - 3, y1 + m, 6, 90); }
     a.fillStyle = '#000'; a.beginPath(); a.roundRect(x0, y0, x1 - x0, y1 - y0, 8); a.fill();
   }
-  // Light wear: soft scuffs, a few scratches, and grime low down. Kept light here; the heavy ageing is a later stage.
-  for (let i = 0; i < 90; i++) {
-    const x = rand() * W, y = rand() * H, s = 10 + rand() * 50, g = c.createRadialGradient(x, y, 0, x, y, s);
-    g.addColorStop(0, `rgba(70,60,50,${0.04 + rand() * 0.07})`); g.addColorStop(1, 'rgba(70,60,50,0)');
-    c.fillStyle = g; c.fillRect(x - s, y - s, s * 2, s * 2);
-    r.fillStyle = `rgba(220,220,220,${0.15 + rand() * 0.2})`; r.beginPath(); r.arc(x / 2, y / 2, s / 2, 0, 7); r.fill();
-  }
-  c.strokeStyle = 'rgba(255,255,255,0.35)'; c.lineWidth = 1;
-  for (let i = 0; i < 60; i++) { const x = rand() * W, y = rand() * H; c.beginPath(); c.moveTo(x, y); c.lineTo(x + (rand() - 0.5) * 40, y + (rand() - 0.5) * 12); c.stroke(); }
-  const grime = c.createLinearGradient(0, Y(side(-2.3)), 0, Y(0.35));
-  grime.addColorStop(0, 'rgba(30,40,50,0)'); grime.addColorStop(1, 'rgba(30,40,50,0.22)');
-  c.fillStyle = grime; c.fillRect(0, Y(side(-2.3)), W, Y(0.35) - Y(side(-2.3)));
+  // Roughness: paint is matte; rust is rougher, oil a little shinier.
+  for (let i = 0; i < 160; i++) { const x = rand() * W / 2, y = rand() * H / 2, s = 4 + rand() * 18; r.fillStyle = `rgba(${rand() < 0.7 ? '235,235,235' : '120,120,120'},${0.2 + rand() * 0.3})`; r.beginPath(); r.arc(x, y, s, 0, 7); r.fill(); }
   return { map: tex(col, { color: true }), bumpMap: tex(bump), roughnessMap: tex(rough), alphaMap: tex(alpha) };
+}
+
+// Weathered paint for the parts bolted onto the hull (wings, pods, spine modules, nacelles): faded base colour,
+// replacement-panel blocks, rust streaks and patches, grime, scratches. Cached per colour.
+const wornCache = new Map();
+export function wornTexture(color, seed = 5) {
+  const key = color + seed; if (wornCache.has(key)) return wornCache.get(key);
+  const S = 256, cv = canvas(S, S), c = cv.getContext('2d'), rand = rng(seed + color.length * 7);
+  c.fillStyle = color; c.fillRect(0, 0, S, S);
+  for (let i = 0; i < 4; i++) { c.fillStyle = `rgba(${rand() < 0.5 ? '25,22,16' : '225,220,195'},${0.06 + rand() * 0.08})`; c.fillRect(rand() * S, rand() * S, 40 + rand() * 90, 30 + rand() * 70); }
+  c.strokeStyle = 'rgba(20,18,14,0.45)'; c.lineWidth = 1.5; c.strokeRect(6, 6, S - 12, S - 12);
+  for (let i = 0; i < 14; i++) { const x = rand() * S, y = rand() * S * 0.7, len = 20 + rand() * 90, g = c.createLinearGradient(x, y, x, y + len); g.addColorStop(0, 'rgba(125,62,26,0.5)'); g.addColorStop(1, 'rgba(125,62,26,0)'); c.fillStyle = g; c.fillRect(x, y, 2 + rand() * 4, len); }
+  for (let i = 0; i < 8; i++) { const x = rand() * S, y = rand() * S, s = 3 + rand() * 10; c.fillStyle = `rgba(118,62,30,${0.5 + rand() * 0.4})`; c.beginPath(); c.ellipse(x, y, s, s * 0.7, rand() * 3, 0, 7); c.fill(); }
+  for (let i = 0; i < 6; i++) { const x = rand() * S, y = rand() * S, s = 3 + rand() * 9; c.fillStyle = '#8E8B80'; c.beginPath(); c.ellipse(x, y, s, s * 0.6, rand() * 3, 0, 7); c.fill(); }
+  c.lineWidth = 1; for (let i = 0; i < 30; i++) { const x = rand() * S, y = rand() * S, l = 6 + rand() * 30, a = (rand() - 0.5); c.strokeStyle = `rgba(210,205,190,${0.25 + rand() * 0.3})`; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke(); }
+  const g = c.createLinearGradient(0, S * 0.5, 0, S); g.addColorStop(0, 'rgba(25,22,16,0)'); g.addColorStop(1, 'rgba(25,22,16,0.3)'); c.fillStyle = g; c.fillRect(0, 0, S, S);
+  const t = tex(cv, { color: true }); wornCache.set(key, t); return t;
 }
 
 // A whiteboard covered in formulas, arrows and a little orbit sketch.
@@ -419,4 +464,94 @@ export function whiteboardTexture() {
   g.strokeStyle = '#2E7D4F'; g.beginPath(); for (let x = 30; x < 280; x += 4) g.lineTo(x, 330 - Math.sin(x / 30) * 30 - x * 0.12); g.stroke();
   g.strokeStyle = 'rgba(0,0,0,0.06)'; g.lineWidth = 30; g.beginPath(); g.moveTo(380, 60); g.lineTo(560, 80); g.stroke(); // a half-wiped smudge
   return tex(c, { color: true });
+}
+
+// ---------- Animated bridge screens (each redraws a few times a second at most) ----------
+const screenFrame = (g, w, h, title, color) => {
+  g.strokeStyle = 'rgba(255,255,255,0.08)'; g.lineWidth = 1; for (let y = 0; y < h; y += 3) { g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke(); } // faint scanlines
+  g.fillStyle = color; g.font = '700 14px Nunito, sans-serif'; g.fillText(title, 10, 18);
+};
+// A radar: a slow sweep with blips that fade after it passes.
+export function radarTexture() {
+  const W = 256, H = 200, c = canvas(W, H), g = c.getContext('2d'), t = tex(c, { color: true }), rand = rng(44);
+  const blips = Array.from({ length: 7 }, () => ({ a: rand() * 6.283, r: 20 + rand() * 65 }));
+  let last = -1;
+  function draw(time) {
+    g.fillStyle = '#081C14'; g.fillRect(0, 0, W, H);
+    const cx = W / 2, cy = H / 2 + 8, R = 82, sweep = (time * 0.9) % 6.283;
+    g.strokeStyle = 'rgba(110,220,150,0.25)'; g.lineWidth = 1;
+    for (const r of [R / 3, R * 2 / 3, R]) { g.beginPath(); g.arc(cx, cy, r, 0, 7); g.stroke(); }
+    g.beginPath(); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.stroke();
+    for (let k = 0; k < 18; k++) { const a = sweep - k * 0.04; g.strokeStyle = `rgba(110,230,150,${0.35 * (1 - k / 18)})`; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); g.stroke(); }
+    for (const b of blips) { const since = (sweep - b.a + 6.283) % 6.283, al = Math.max(0, 1 - since / 4); if (al <= 0) continue; g.fillStyle = `rgba(150,255,180,${al})`; g.beginPath(); g.arc(cx + Math.cos(b.a) * b.r, cy + Math.sin(b.a) * b.r, 3, 0, 7); g.fill(); }
+    screenFrame(g, W, H, 'RADAR', '#8FE6A8');
+    t.needsUpdate = true;
+  }
+  draw(0);
+  return { texture: t, update(time) { if (time - last > 0.1) { last = time; draw(time); } } };
+}
+// A rear camera feed: drifting stars past the engine, with a timestamp.
+export function cameraFeedTexture() {
+  const W = 256, H = 160, c = canvas(W, H), g = c.getContext('2d'), t = tex(c, { color: true }), rand = rng(52);
+  const stars = Array.from({ length: 60 }, () => ({ x: rand() * W, y: rand() * H, s: 0.5 + rand() * 1.5 }));
+  let last = -1;
+  function draw(time) {
+    g.fillStyle = '#0A0D12'; g.fillRect(0, 0, W, H);
+    for (const s of stars) { const x = (s.x + time * 12 * s.s) % W; g.fillStyle = `rgba(220,230,255,${0.35 + s.s * 0.3})`; g.fillRect(x, s.y, s.s, s.s); }
+    g.fillStyle = '#3A3C36'; g.beginPath(); g.moveTo(W, H); g.lineTo(W * 0.55, H); g.lineTo(W * 0.7, H * 0.62); g.lineTo(W, H * 0.55); g.fill(); // the hull edge in frame
+    g.fillStyle = 'rgba(255,170,90,0.35)'; g.beginPath(); g.arc(W * 0.86, H * 0.86, 10 + Math.sin(time * 6) * 1.5, 0, 7); g.fill();
+    g.fillStyle = 'rgba(200,210,190,0.06)'; g.fillRect(0, (time * 40) % H, W, 6);   // a rolling bar
+    screenFrame(g, W, H, 'CAM 2  AFT', '#D9DDD2');
+    g.fillStyle = '#FF6A5A'; g.beginPath(); g.arc(W - 16, 14, 4, 0, 7); g.fill();
+    g.fillStyle = '#C9CFC0'; g.font = '600 11px monospace'; g.fillText('T+' + (1000 + time | 0), W - 72, H - 8);
+    t.needsUpdate = true;
+  }
+  draw(0);
+  return { texture: t, update(time) { if (time - last > 0.12) { last = time; draw(time); } } };
+}
+// A systems diagram: boxes for the ship's systems, joined by lines, with gently blinking status dots.
+export function systemsTexture() {
+  const W = 256, H = 180, c = canvas(W, H), g = c.getContext('2d'), t = tex(c, { color: true });
+  const nodes = [['POWER', 40, 50], ['FUEL', 40, 110], ['ENGINE', 128, 80], ['O2', 216, 50], ['DATA', 216, 110], ['NAV', 128, 150]];
+  const links = [[0, 2], [1, 2], [2, 3], [2, 4], [2, 5], [4, 5]];
+  let last = -1;
+  function draw(time) {
+    g.fillStyle = '#141B2A'; g.fillRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(131,203,238,0.5)'; g.lineWidth = 2;
+    for (const [a, b] of links) { g.beginPath(); g.moveTo(nodes[a][1], nodes[a][2]); g.lineTo(nodes[b][1], nodes[b][2]); g.stroke(); }
+    nodes.forEach(([n, x, y], i) => {
+      g.fillStyle = '#22304A'; g.fillRect(x - 30, y - 12, 60, 24); g.strokeStyle = '#83CBEE'; g.strokeRect(x - 30, y - 12, 60, 24);
+      g.fillStyle = '#C9D9EE'; g.font = '700 10px Nunito, sans-serif'; g.fillText(n, x - 24, y + 4);
+      const on = Math.sin(time * 1.6 + i * 1.3) > -0.6; g.fillStyle = i === 1 ? (on ? '#FFC56B' : '#6A5530') : (on ? '#7FE0C2' : '#2F5A50'); g.beginPath(); g.arc(x + 22, y, 3.5, 0, 7); g.fill();
+    });
+    screenFrame(g, W, H, 'SYSTEMS', '#83CBEE');
+    t.needsUpdate = true;
+  }
+  draw(0);
+  return { texture: t, update(time) { if (time - last > 0.2) { last = time; draw(time); } } };
+}
+// The navigation map with the ship's marker creeping along the route.
+export function navMapTexture() {
+  const base = starMapTexture().texture.image, W = base.width, H = base.height, c = canvas(W, H), g = c.getContext('2d'), t = tex(c, { color: true });
+  const stops = [[60, 220], [150, 160], [260, 190], [350, 90], [450, 120]];
+  let last = -1;
+  function draw(time) {
+    g.drawImage(base, 0, 0);
+    const u = (time * 0.03) % 1 * (stops.length - 1), i = Math.floor(u), f = u - i, a = stops[i], b = stops[i + 1];
+    const x = a[0] + (b[0] - a[0]) * f, y = a[1] + (b[1] - a[1]) * f;
+    g.strokeStyle = 'rgba(255,255,255,0.7)'; g.lineWidth = 2; g.beginPath(); g.arc(x, y, 9 + Math.sin(time * 3) * 2, 0, 7); g.stroke();
+    g.fillStyle = '#FFFFFF'; g.beginPath(); g.moveTo(x, y - 6); g.lineTo(x + 5, y + 5); g.lineTo(x - 5, y + 5); g.fill();
+    screenFrame(g, W, H, 'NAVIGATION', '#7FE0C2');
+    t.needsUpdate = true;
+  }
+  draw(0);
+  return { texture: t, update(time) { if (time - last > 0.15) { last = time; draw(time); } } };
+}
+// A small printed label (white or yellow) for boxes, bins and shelves.
+const labelCache = new Map();
+export function boxLabelTexture(text, bg = '#E8E2D2') {
+  const key = text + bg; if (labelCache.has(key)) return labelCache.get(key);
+  const c = canvas(128, 48), g = c.getContext('2d'); g.fillStyle = bg; g.fillRect(0, 0, 128, 48);
+  g.fillStyle = '#26241F'; g.font = '800 22px Nunito, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 64, 26);
+  const t = tex(c, { color: true }); labelCache.set(key, t); return t;
 }

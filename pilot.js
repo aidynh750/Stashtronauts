@@ -162,9 +162,20 @@ const POSES = {
       aL: [-s * 0.42, 0.11, 0.3 + Math.max(0, -s) * 0.35], aR: [s * 0.42, 0.11, 0.3 + Math.max(0, s) * 0.35], curl: 0.4, bob: s2,
     };
   },
-  climb: t => {
-    const s = Math.sin(t * 5);
-    return { lL: [0.75 + s * 0.4, -1.2], lR: [0.75 - s * 0.4, -1.2], aL: [2.75 + s * 0.2, 0.25, 0.35 - s * 0.2], aR: [2.75 - s * 0.2, 0.25, 0.35 + s * 0.2], hx: 0.3, tx: -0.08, curl: 0.9 };
+  // Ladder climbing, one rung per step: phase runs 0..1 through a step, parity says which diagonal pair moves (right hand
+  // with left foot, then left hand with right foot), dir is +1 going up and -1 going down. The moving hand reaches to
+  // the next rung while the other one holds; the body shifts towards the holding side and the head follows the moving hand.
+  climb: (t, o) => {
+    const c = o.climb || { phase: 0, parity: 0, dir: 1 }, f = c.phase, lift = Math.sin(f * Math.PI);
+    const mover = c.dir >= 0 ? f : 1 - f, holder = 1 - mover, right = c.parity === 0;
+    const arm = (e, l) => [2.0 + 0.62 * e + l * 0.08, 0.2, 1.0 - 0.6 * e + l * 0.3];
+    const leg = (e, l) => [0.3 + 0.75 * e + l * 0.18, -(0.4 + 1.05 * e) - l * 0.4];
+    return {
+      tx: -0.06, hipZ: 0.02, hipX: (right ? -1 : 1) * 0.035 * lift, tz: (right ? 1 : -1) * 0.04 * lift,
+      aR: arm(right ? mover : holder, right ? lift : 0), aL: arm(right ? holder : mover, right ? 0 : lift),
+      lL: leg(right ? mover : holder, right ? lift : 0), lR: leg(right ? holder : mover, right ? 0 : lift),
+      hx: c.dir >= 0 ? 0.32 : -0.35, hy: (right ? -1 : 1) * 0.16 * lift, curl: 0.95,
+    };
   },
   sit: () => ({ ...SITTING, aL: [0.35, 0.1, 0.9], aR: [0.35, 0.1, 0.9], curl: 0.35 }),
   pilot: (t, o) => ({ ...SITTING, aL: [0.75, 0.12, 0.85], aR: [0.75, 0.12, 0.85], curl: 0.85,
@@ -321,7 +332,7 @@ export function makePilot(look = {}) {
     get mood() { return override || cur.name; },
     // Set a mood from code: setMood('worried'). setMood(null) goes back to automatic.
     setMood(m) { override = MOODS.includes(m) ? m : null; },
-    update(dt, { anim = 'pilot', mood = 'happy', turn = 0, accel = 0, stride = 6.5, reduced = false } = {}) {
+    update(dt, { anim = 'pilot', mood = 'happy', turn = 0, accel = 0, stride = 6.5, climb = null, reduced = false } = {}) {
       t += dt;
       if (anim !== lastAnim) { animT = 0; lastAnim = anim; }
       animT += dt;
@@ -338,7 +349,7 @@ export function makePilot(look = {}) {
       for (const e of eyes) e.scale.y = Math.min(1.12, Math.max(0.9, cur.eyeOpen));
       for (const p of pupils) p.position.x = ease(p.position.x, -Math.max(-1, Math.min(1, turn)) * 0.006, k);
 
-      const target = { ...ZERO, ...POSES[anim](reduced ? 0 : animT, { turn, accel, stride }) };
+      const target = { ...ZERO, ...POSES[anim](reduced ? 0 : animT, { turn, accel, stride, climb }) };
       const pk = reduced ? 1 : 1 - Math.exp(-dt * 8);
       for (const key of Object.keys(ZERO)) {
         if (Array.isArray(ZERO[key])) pose[key] = pose[key].map((v, i) => ease(v, target[key][i], pk));

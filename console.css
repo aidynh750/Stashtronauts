@@ -243,3 +243,4 @@ body:has(.console[open]) .banner{display:none}
 .toggle{display:flex;gap:12px;align-items:flex-start;margin-top:18px;cursor:pointer}
 .main .toggle input{flex:none;width:24px;height:24px;min-height:0;margin:2px 0 0;accent-color:var(--good)}
 .toggle small{display:block;color:var(--mute);font-weight:600;font-size:.92rem}
+.controls{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:8px 0 0}.controls dt{font-weight:800}.controls dd{margin:0}
