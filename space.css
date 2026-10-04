@@ -4,37 +4,20 @@
 html,body{margin:0;height:100%;overflow:hidden;background:var(--space);color:var(--ink);font-family:'Nunito',system-ui,sans-serif}
 canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;outline:none}
 canvas.dragging{cursor:grabbing}
-canvas.over{cursor:pointer}
 
 .bar{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:12px;
   padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;pointer-events:none}
 .bar>*{pointer-events:auto}
 h1{margin:0;font-size:1.3rem;font-weight:800;letter-spacing:.2px;text-shadow:0 2px 8px rgba(0,0,0,.6)}
 
-.pill,button{font:inherit;font-weight:700;border:0;border-radius:999px;padding:9px 16px;cursor:pointer;
-  background:var(--accent);color:var(--accentInk);text-decoration:none;font-size:.95rem}
-button:focus-visible,.pill:focus-visible,canvas:focus-visible{outline:3px solid var(--warm);outline-offset:2px}
+button{font:inherit;cursor:pointer;color:inherit}
+button:focus-visible,canvas:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--warm);outline-offset:2px}
+.hud-btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:8px 18px 8px 14px;border-radius:999px;font-weight:800;font-size:1rem;
+  color:var(--ink);background:rgba(28,40,78,.72);border:1.5px solid rgba(160,190,255,.3);backdrop-filter:blur(8px);
+  box-shadow:0 0 18px rgba(127,224,194,.18),inset 0 1px 0 rgba(255,255,255,.12)}
+.hud-btn:hover{border-color:var(--accent)}
+.hud-btn svg{width:20px;height:20px;fill:none;stroke:var(--accent);stroke-width:2;stroke-linecap:round}
 
 .banner{position:fixed;top:calc(60px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);margin:0;max-width:calc(100% - 32px);
   background:var(--panel);border:1.5px solid var(--line);border-radius:14px;padding:8px 14px;font-size:.92rem;text-align:center;backdrop-filter:blur(6px)}
-.banner a{color:var(--accent);font-weight:700}
-
-/* Keyboard and screen reader list of planets. Hidden until something in it gets focus. */
-.planets{position:fixed;top:calc(60px + env(safe-area-inset-top,0px));left:16px;clip-path:inset(50%);width:1px;height:1px;overflow:hidden}
-.planets:focus-within{clip-path:none;width:auto;height:auto;background:var(--panel);border:1.5px solid var(--line);border-radius:16px;padding:8px}
-.planets ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-.planets button{background:transparent;color:var(--ink);text-align:left;padding:6px 10px}
-
-.card{position:fixed;right:16px;top:calc(64px + env(safe-area-inset-top,0px));width:320px;max-width:calc(100% - 32px);
-  background:var(--panel);border:1.5px solid var(--line);border-radius:22px;padding:18px;backdrop-filter:blur(10px);box-shadow:0 10px 30px rgba(0,0,0,.4)}
-.card h2{margin:0 30px 10px 0;font-size:1.25rem;font-weight:800}.card h2 span{font-weight:600;color:var(--mute)}
-.card p{margin:8px 0}.card .kind{color:var(--mute);font-size:.9rem;margin:0 0 2px}
-.card .pill{display:inline-block;margin-top:6px}
-.card .close{position:absolute;top:10px;right:10px;width:34px;height:34px;padding:0;font-size:1.3rem;background:transparent;color:var(--mute)}
-.meter{height:12px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden}
-.meter i{display:block;height:100%;border-radius:99px;background:var(--accent)}
-@media (max-width:699px){.card{top:auto;left:16px;right:16px;width:auto;max-width:none;bottom:calc(16px + env(safe-area-inset-bottom,0px))}
-  .card:not([hidden])~.zoom{display:none}}
-
-.zoom{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px}
-.zoom button{width:46px;height:46px;padding:0;font-size:1.4rem;line-height:1;background:var(--panel);color:var(--ink);border:1.5px solid var(--line);backdrop-filter:blur(6px)}
+.banner .link{background:none;border:0;padding:0;color:var(--accent);font-weight:800;text-decoration:underline;font-size:inherit}

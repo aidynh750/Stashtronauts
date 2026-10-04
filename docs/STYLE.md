@@ -1,6 +1,6 @@
 # Stashtronauts art style
 
-Everything is drawn in code on a `<canvas>`. There are no image files, sprites or borrowed assets.
+Everything is built in code with three.js on a `<canvas>`. There are no image files, models or borrowed assets.
 
 ## The feeling
 Calm, chunky and friendly. Space should feel like a cozy place you want to visit, never a scary or busy one. Money is stressful enough. The art should lower the temperature.
@@ -13,12 +13,12 @@ We take inspiration from the *mood* of the calm, chunky worlds of Astroneer and 
 - **Soft outlines.** A thin, semi-transparent dark outline (`rgba(10,12,40,0.35)`), never solid black.
 
 ## Light and shading
-- **Flat, cel-style shading.** Light comes from the top left. Shadows are one or two flat crescents on the lower right, not smooth gradients.
-- **One small highlight** at the top left of round things.
-- **Glows are soft and additive** (engine flames, trails, atmospheres). Use `globalCompositeOperation = 'lighter'` and keep them gentle.
+- **One sun.** A single far-off light, so every planet has a clear lit side and a dark side. A faint cool fill keeps dark sides from going fully black.
+- **Faceted, flat shading.** Planets are low-poly spheres where every face has one flat color, with stepped terrain so land looks chunky.
+- **Glows are soft and additive** (atmospheres, the sun, engine flames). Keep them gentle.
 
 ## Color
-- **Background:** deep navy (`#0A0E1F` to `#18204A`) with faint purple and teal nebula clouds.
+- **Background:** deep navy with stars in every direction, a faint galaxy band, and far-off purple, teal and rose nebula clouds.
 - **Biomes:** each planet uses one calm set: meadow green, ocean blue, dune sand, frost white, coral pink or crystal violet. Mid-tone and slightly warm. Avoid neon and pure saturated primaries.
 - **UI accents:** mint `#7FE0C2` for progress and buttons, warm gold `#FFC56B` for "goal reached".
 - **Text** is always light (`#EEF3FF`) with a soft dark shadow so it reads over anything.
@@ -31,8 +31,8 @@ Round, expressive and built from layered parts (body, eyes, mouth, hair or hat, 
 
 ## Motion
 - Ease in and out. Things speed up gently and slow down to land.
-- Keep the number of moving things capped (`MAX_MOVERS` in `space.js`).
-- **Respect `prefers-reduced-motion`.** When it is on, nothing twinkles, drifts or flies. Ships park, and the camera jumps instead of gliding.
+- Keep it calm: right now only the planets' slow spin and the camera move.
+- **Respect `prefers-reduced-motion`.** When it is on, planets stop spinning and the camera moves in steps instead of gliding.
 
 ## Tone
 Worry is allowed to be funny, never shaming. Any warning the art or the guide gives comes with a calm next step.

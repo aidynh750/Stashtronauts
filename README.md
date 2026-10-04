@@ -5,7 +5,7 @@ Turn your savings goals into planets you can watch grow. A friendly money tracke
 
 **Live demo:** https://YOUR-USERNAME.github.io/money-world/
 
-**Status:** The tracker works today, and the first space view is live: your savings goals appear as planets you can pan, zoom and tap. The rest of the planet world is in active development.
+**Status:** The tracker lives inside the space view as a ship console (a tablet built into the dashboard), and your savings goals appear as 3D planets that grow as you save. You can look around and fly between them. The rest of the planet world is in active development.
 
 ## What it does today
 - **What you have:** track your accounts and see what you have minus what you owe
@@ -29,8 +29,9 @@ Replace the tabs with a free-flying space scene.
 
 ## Roadmap
 - [x] Working tracker: accounts, goals, budgets, debt payoff planner
+- [x] Ship console over the space view, with a one-question-at-a-time first-visit setup and a keypad for entering money
 - [x] Live on GitHub Pages
-- [x] Space view with pan and zoom
+- [x] 3D space view: drag to look, scroll or pinch to fly
 - [x] Procedurally generated planets
 - [ ] Zoom into planets and meet residents
 - [ ] Money events: deposits, withdrawals, transfers
@@ -40,20 +41,22 @@ Replace the tabs with a free-flying space scene.
 
 ## Technical highlights
 - Plain HTML, CSS, and JavaScript with no frameworks
-- A month-by-month payoff simulation (`sim()` in `tracker.js`) with compounding interest and rolled-over payments
+- A month-by-month payoff simulation (`sim()` in `money.js`) with compounding interest and rolled-over payments
 - State saved with `localStorage`, so there is no backend
-- A canvas space view (`space.js`) with parallax stars, pan and pinch zoom, and planets generated from a seed so the same name always gives the same planet
+- A 3D space view (`space.js`) built with three.js (loaded from a CDN, no build step): faceted planets, rings, moons, glowing atmospheres and a nebula backdrop, all generated from a seed so the same name always gives the same planet and the same spot in space
 - Respects `prefers-reduced-motion`
 
 ## Files
 - `index.html`, `space.css`, `space.js`: the space view (home page)
-- `tracker.html`, `tracker.css`, `tracker.js`: the money tracker
+- `console.js`, `console.css`: the ship console (the money tracker)
+- `CLAUDE.md`: notes for working on the project (it's desktop first; a phone layout comes later)
+- `money.js`: saved data and money math shared by the console and the space view
 - `docs/STYLE.md`: the art style guide
 
 ## Run it locally
 1. Open this folder in VS Code
 2. Install the Live Server extension
-3. Right-click `index.html` and choose Open with Live Server (the tracker is at `tracker.html`)
+3. Right-click `index.html` and choose Open with Live Server
 
 ## Disclaimer
 This is a tracking tool, not financial advice.

@@ -7,27 +7,48 @@
 <meta name="description" content="Your savings goals as planets you can fly between.">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap">
 <link rel="stylesheet" href="space.css">
+<link rel="stylesheet" href="console.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
 </head>
 <body>
-<canvas id="space" aria-label="Space map of your savings goals. Drag to look around, scroll or pinch to zoom." role="img"></canvas>
+<canvas id="space" aria-label="Space view of your savings goals. Drag to look around, scroll or pinch to fly forward and back." role="img"></canvas>
 
 <header class="bar">
   <h1>Stashtronauts</h1>
-  <a class="pill" href="tracker.html">Open tracker</a>
+  <button id="openConsole" class="hud-btn" aria-haspopup="dialog">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="3"/><path d="M8 20h8"/></svg>Console
+  </button>
 </header>
 
-<p id="banner" class="banner" hidden>These are example planets. <a href="tracker.html">Add a savings goal</a> to see your own.</p>
+<p id="banner" class="banner" hidden role="status">These are example planets. <button class="link" data-open="setup">Add a savings goal</button> to see your own.</p>
 
-<nav class="planets" aria-label="Planets"><ul id="planetList"></ul></nav>
+<p id="hello" class="banner hello" role="status" hidden></p>
 
-<aside id="card" class="card" aria-live="polite" hidden></aside>
+<!-- The ship console: a tablet built into the dashboard. -->
+<dialog id="console" class="console" aria-labelledby="shipLabel">
+  <div class="device">
+    <span class="hw keys" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="hw knob" aria-hidden="true"></span>
+    <span class="hw power" aria-hidden="true"></span>
+    <div class="screen">
+      <header class="status">
+        <h2 class="ship"><span class="lamp" aria-hidden="true"></span><span id="shipLabel"></span></h2>
+        <p id="worthLine" class="worth"></p>
+        <button class="close" data-a="close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>Close <kbd>Esc</kbd></button>
+      </header>
+      <nav id="side" class="side" aria-label="Console sections"></nav>
+      <main id="panel" class="main" tabindex="-1"></main>
+    </div>
+  </div>
+  <p id="live" class="sr" role="status" aria-live="polite"></p>
+</dialog>
 
-<div class="zoom" role="group" aria-label="Camera">
-  <button id="zoomIn" aria-label="Zoom in">+</button>
-  <button id="zoomOut" aria-label="Zoom out">&minus;</button>
-  <button id="home" aria-label="Show all planets">&#8962;</button>
-</div>
+<!-- Money entry and short questions open in this smaller dialog over the tablet. -->
+<dialog id="pad" class="pad" aria-labelledby="padTitle"></dialog>
 
-<script src="space.js"></script>
+<script type="module" src="space.js"></script>
+<script type="module" src="console.js"></script>
 </body>
 </html>
