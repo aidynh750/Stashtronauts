@@ -18,6 +18,12 @@
 <header class="bar">
   <h1>Stashtronauts</h1>
   <span class="hud-row">
+  <span id="fleetHud" class="fleet-hud">
+    <button id="fleetBtn" class="hud-btn icon" aria-expanded="false" aria-controls="fleetTip" title="Emergency fund fleet">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8-7.5 10-4.3-2-7.5-5.4-7.5-10V6z"/><path d="M8.5 12.5l2.4 2.3 4.6-5"/></svg><span class="sr">Emergency fund fleet</span>
+    </button>
+    <div id="fleetTip" class="fleet-tip" role="status"><div><p id="fleetLine"></p><button id="fleetGo" class="hud-btn small">Show the fleet</button></div></div>
+  </span>
   <button id="lookCloser" class="hud-btn" aria-pressed="false">Look closer</button>
   <button id="freeCam" class="hud-btn" aria-pressed="false" title="Free camera (F)">Free camera</button>
   <button id="openConsole" class="hud-btn" aria-haspopup="dialog">
@@ -29,6 +35,8 @@
 <p id="banner" class="banner" hidden role="status">These are example planets. <button class="link" data-open="setup">Add a savings goal</button> to see your own.</p>
 
 <p id="hello" class="banner hello" role="status" hidden></p>
+
+<p id="toast" class="toast" role="status" hidden></p>
 
 <!-- Shown once, on the first visit. The full list is in the console under "Ship and pilot". -->
 <aside id="hint" class="hint" hidden aria-label="Controls">

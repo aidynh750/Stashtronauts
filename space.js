@@ -2,8 +2,9 @@
 // You fly a small ship with W/A/S/D or the arrow keys. The camera follows behind; drag to look around the ship, scroll to zoom.
 // Everything is built in code. Nothing is sent to a server.
 import * as THREE from 'three';
-import { load, goalsOf, planetNames, shipMoney, KEY, NAMES_KEY } from './money.js';
+import { load, goalsOf, planetNames, shipMoney, isEmergencyFund, fmt, KEY, NAMES_KEY } from './money.js';
 import { makeShip } from './ship.js';
+import { makeFleet } from './fleet.js';
 import { MOODS } from './pilot.js';
 
 const cv = document.getElementById('space');
@@ -215,11 +216,11 @@ function makeDust(radius) {
 // progress is how much of the goal is saved, 0 to 1. Planets grow as it fills up.
 const EXAMPLES = [
   { id: 'ex1', myth: 'Elysium', label: 'Car fund', amount: 6200, target: 15000 },
-  { id: 'ex2', myth: 'Atlas', label: 'Emergency fund', amount: 3100, target: 5000 },
   { id: 'ex3', myth: 'Calypso', label: 'Trip to Japan', amount: 800, target: 4000 },
   { id: 'ex4', myth: 'Vesta', label: 'New laptop', amount: 1200, target: 1200 },
   { id: 'ex5', myth: 'Hyperion', label: 'House deposit', amount: 9000, target: 30000 },
 ].map((p, slot) => ({ ...p, slot, progress: p.amount / p.target }));
+const EXAMPLE_FUND = 3100;   // the example emergency fund: $3,100, guarded by the fleet instead of a planet
 
 // Biomes are calm, chunky color sets from docs/STYLE.md. A planet's name decides which one it gets.
 // kind decides the surface: 'terra' has seas and stepped land, 'mesa' is stepped rock, 'bands' is a striped giant.
@@ -232,11 +233,12 @@ const BIOMES = [
   { name: 'crystal', tint: '#9C8BE0', kind: 'mesa', land: ['#5F4FAE', '#7764C4', '#9C8BE0', '#C6B8F5', '#F0E7FF'], atmo: '#CFC2FF', crystals: '#B8F1FF' },
 ];
 
+// The emergency fund is not a planet: it's the guardian fleet (fleet.js). It keeps its name and slot, so nothing moves.
 function readGoals() {
   const goals = goalsOf(load());
   if (!goals.length) return { list: EXAMPLES, examples: true };
   const names = planetNames(goals);
-  return { list: goals.map(g => ({ id: g.id, myth: names[g.id].myth, slot: names[g.id].slot, label: g.name,
+  return { list: goals.filter(g => !isEmergencyFund(g)).map(g => ({ id: g.id, myth: names[g.id].myth, slot: names[g.id].slot, label: g.name,
     progress: clamp((+g.amount || 0) / (+g.target || 1), 0, 1) })), examples: false };
 }
 // A planet starts at 70% of its full size and reaches full size when its goal is met.
@@ -422,6 +424,10 @@ function layout(planets) {
 // ---------- The player's ship and the chase camera ----------
 const ship = makeShip();
 scene.add(ship.root, ...ship.world);
+// The emergency fund's guardian fleet: a mothership and its fighters, far from everything.
+const fleet = makeFleet({ planets: () => planets, clearance: p => clearance(p), shipPos: ship.root.position, shipRadius: ship.radius,
+  volume: () => volume, toast: msg => toast(msg) });
+scene.add(fleet.root);
 const MAX_SPEED = 36, MAX_BACK = 9, MAX_CLIMB = 10, TURN_RATE = 0.9;
 const flight = { yaw: 0, speed: 0, yawVel: 0, climb: 0, accel: 0, turnTo: null };
 // Default view: behind, above and a little to the right of the ship (a back three-quarter view).
@@ -461,6 +467,7 @@ addEventListener('keydown', e => {
   hideHint();
   if (e.code === 'KeyF' && !e.ctrlKey) { if (!e.repeat) toggleFree(); e.preventDefault(); return; }
   if (e.code === 'Escape' && view.mode === 'free') { leaveFree(); e.preventDefault(); return; }
+  if (e.code === 'Escape' && fleetView()) { leaveFleet(); e.preventDefault(); return; }
   // DEBUG (temporary): L extends and retracts the landing gear, until landing on planets is built (it will call ship.setLandingGear).
   if (e.code === 'KeyL' && !e.ctrlKey) { if (!e.repeat) ship.setLandingGear(!ship.landingGear); return; }
   if (view.mode === 'free') { if (FREE_KEYS[e.code]) { freeKeys.add(e.code); e.preventDefault(); } return; }
@@ -483,6 +490,7 @@ const pointers = new Map();
 let pinchDist = 0;
 const pinch = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
 function setZoom(d) {
+  if (fleetView()) { fleetCam.dist = clamp(d, fleet.size.L * 0.35, fleet.size.L * 3.5); return; }
   if (view.mode === 'entering' || view.mode === 'leaving' || view.mode === 'free') return;   // the glide owns the camera; extra scrolling can't flip it
   if (view.mode === 'outside') {
     chase.tDist = clamp(d, ENTER_AT, 70);
@@ -492,21 +500,23 @@ function setZoom(d) {
     if (d > EXIT_AT) leaveInside(Math.min(70, d));
   }
 }
-const zoom = f => setZoom(chase.tDist * f);
+const zoom = f => setZoom((fleetView() ? fleetCam.dist : chase.tDist) * f);
 const lookBtn = document.getElementById('lookCloser');
 const freeBtn = document.getElementById('freeCam');
 function updateLookBtn() {
   const inside = view.mode === 'inside' || view.mode === 'entering';
-  lookBtn.textContent = inside ? 'Back outside' : 'Look closer';
+  lookBtn.textContent = fleetView() ? 'Back to ship' : inside ? 'Back outside' : 'Look closer';
   lookBtn.setAttribute('aria-pressed', inside);
   lookBtn.hidden = view.mode === 'free';
+  freeBtn.hidden = fleetView();
+  fleetGo.textContent = fleetView() ? 'Back to ship' : 'Show the fleet';
   freeBtn.textContent = view.mode === 'free' ? 'Back to ship' : 'Free camera';
   freeBtn.setAttribute('aria-pressed', view.mode === 'free');
 }
 // Glide the camera from where it is now to a new distance, angle and centre, easing in and out.
-function glide(to) {
+function glide(to, dur = GLIDE) {
   view.from = { dist: chase.dist, yaw: chase.yaw, pitch: chase.pitch, pivot: pivot.clone() };
-  view.to = to; view.t = 0;
+  view.to = to; view.t = 0; view.dur = dur;
   chase.dragging = false;
 }
 function enterInside() {
@@ -517,19 +527,20 @@ function enterInside() {
   chase.tDist = IN_DIST; updateLookBtn();
 }
 function leaveInside(dist = FAR) {
+  if (fleetView()) { leaveFleet(); return; }
   if (view.mode === 'outside' || view.mode === 'leaving') return;
   view.mode = 'leaving'; view.closeLate = false; ship.setOpen(false);
   const d = clamp(dist, ENTER_AT + 2, 70);
   glide({ dist: d, yaw: YAW_REST, pitch: PITCH_REST });
   chase.tDist = d; updateLookBtn();
 }
-lookBtn.addEventListener('click', () => (view.mode === 'inside' || view.mode === 'entering') ? leaveInside() : enterInside());
+lookBtn.addEventListener('click', () => (view.mode === 'inside' || view.mode === 'entering' || fleetView()) ? leaveInside() : enterInside());
 freeBtn.addEventListener('click', () => toggleFree());
 
 // ---------- Free camera: detach from the ship and fly the camera anywhere, through the open hull into every room ----------
 const free = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, speed: 5, side: 1 };
 const camDir = new THREE.Vector3(), camLocal = new THREE.Vector3(), qInv = new THREE.Quaternion();
-function toggleFree() { view.mode === 'free' ? leaveFree() : enterFree(); }
+function toggleFree() { if (fleetView()) return leaveFleet(); view.mode === 'free' ? leaveFree() : enterFree(); }
 function enterFree() {
   if (view.mode === 'free') return;
   view.mode = 'free'; view.closeLate = false;
@@ -552,6 +563,50 @@ function leaveFree() {
   glide({ dist: clamp(Math.max(FAR, d), ENTER_AT + 2, 70), yaw: YAW_REST, pitch: PITCH_REST });
   chase.tDist = view.to.dist; updateLookBtn();
 }
+// ---------- Fleet view: the camera flies over to the guardian mothership and circles it ----------
+// focus is the point it circles, in the mothership's own space (its middle unless set).
+const fleetCam = { yaw: 0, pitch: 0.3, dist: 80, t: 0, from: new THREE.Vector3(), fromLook: new THREE.Vector3(), look: new THREE.Vector3(), focus: new THREE.Vector3(), close: false };
+const fleetView = () => view.mode === 'toFleet' || view.mode === 'fleet';
+function enterFleet() {
+  if (!fleet.present || fleetView()) return;
+  if (view.mode !== 'outside') { ship.setOpen(false); ship.setCutSide(null); }
+  keys.clear(); freeKeys.clear(); auto.active = false; auto.idle = 0; flight.turnTo = null; chase.dragging = false;
+  fleetCam.from.copy(camera.position); camera.getWorldDirection(camDir); fleetCam.fromLook.copy(camera.position).addScaledVector(camDir, 30);
+  // A three-quarter view of the open hangar side, from a little above and in front.
+  fleetCam.yaw = Math.atan2(-0.85, -0.55) + fleet.yaw; fleetCam.pitch = 0.32; fleetCam.dist = fleet.size.L * 1.15; fleetCam.t = 0;
+  view.mode = 'toFleet'; updateLookBtn();
+}
+function leaveFleet() {
+  if (!fleetView()) return;
+  // Glide back to the ship from wherever the camera is, like leaving the free camera.
+  pivot.copy(fleetCam.look);
+  const off = camera.position.clone().sub(pivot), d = Math.max(1, off.length());
+  chase.dist = d; chase.pitch = Math.asin(clamp(off.y / d, -1, 1)); chase.yaw = wrapAngle(Math.atan2(off.x, off.z) - flight.yaw);
+  view.mode = 'leaving'; view.closeLate = false;
+  glide({ dist: FAR, yaw: YAW_REST, pitch: PITCH_REST }, reduced ? GLIDE : 2.6);
+  chase.tDist = FAR; updateLookBtn();
+}
+const fleetDir = new THREE.Vector3(), fleetPos = new THREE.Vector3(), fleetC = new THREE.Vector3();
+function followFleet(dt) {
+  if (!fleet.present) { leaveFleet(); return; }
+  const c = fleet.toWorld(fleetCam.focus, fleetC), cp = Math.cos(fleetCam.pitch);
+  fleetDir.set(Math.sin(fleetCam.yaw) * cp, Math.sin(fleetCam.pitch), Math.cos(fleetCam.yaw) * cp);
+  if (!fleetCam.close) fleetCam.dist = Math.max(fleetCam.dist, fleet.minDist(fleetDir) + 2);   // never inside the hull
+  fleetPos.copy(c).addScaledVector(fleetDir, fleetCam.dist);
+  keepClear(fleetPos, 2, false);
+  if (view.mode === 'toFleet') {
+    fleetCam.t = reduced ? 1 : Math.min(1, fleetCam.t + dt / 3);
+    const e = fleetCam.t * fleetCam.t * (3 - 2 * fleetCam.t);
+    camera.position.lerpVectors(fleetCam.from, fleetPos, e);
+    fleetCam.look.lerpVectors(fleetCam.fromLook, c, e);
+    if (fleetCam.t >= 1) { view.mode = 'fleet'; updateLookBtn(); }
+  } else {
+    camera.position.lerp(fleetPos, reduced ? 1 : 1 - Math.exp(-dt * 4));
+    fleetCam.look.lerp(c, reduced ? 1 : 1 - Math.exp(-dt * 4));
+  }
+  camera.lookAt(fleetCam.look);
+}
+
 // A click (not a drag) on the dashboard screen opens the console.
 const clickStart = { x: 0, y: 0, t: 0 }, ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
 cv.addEventListener('pointerup', e => {
@@ -570,7 +625,9 @@ cv.addEventListener('pointerdown', e => {
 cv.addEventListener('pointermove', e => {
   const p = pointers.get(e.pointerId);
   if (!p) return;
-  if (pointers.size === 1 && view.mode === 'free') {
+  if (pointers.size === 1 && fleetView()) {
+    fleetCam.yaw -= (e.clientX - p.x) * 0.0045; fleetCam.pitch = clamp(fleetCam.pitch + (e.clientY - p.y) * 0.004, -0.9, 1.3);
+  } else if (pointers.size === 1 && view.mode === 'free') {
     free.yaw -= (e.clientX - p.x) * 0.0035; free.pitch = clamp(free.pitch - (e.clientY - p.y) * 0.0035, -1.5, 1.5);
   } else if (pointers.size === 1) {
     chase.yaw -= (e.clientX - p.x) * 0.0045;
@@ -596,12 +653,13 @@ cv.addEventListener('wheel', e => {
 
 // Never fly into a planet, and never drift off into nowhere.
 const clearance = p => p.look.radius * p.group.scale.x * 1.12;
-function keepClear(pos, pad) {
+function keepClear(pos, pad, withFleet = true) {
   for (const p of planets) {
     tmpV.copy(pos).sub(p.group.position);
     const min = clearance(p) + pad;
     if (tmpV.length() < min) pos.copy(p.group.position).addScaledVector(tmpV.normalize(), min); // slide along it
   }
+  if (withFleet) fleet.keepClear(pos, pad);   // and never into the guardian mothership
   if (pos.length() > volume * 1.5) pos.setLength(volume * 1.5);
 }
 
@@ -630,6 +688,7 @@ function pickWaypoint() {
     const dir = cand.clone().sub(pos).normalize();
     if (auto.heading && dir.dot(auto.heading) > 0.65) continue; // not the same way again
     if (planets.some(p => segDist(pos, cand, p.group.position) < clearance(p) + margin)) continue;
+    if (fleet.blocks(pos, cand, margin)) continue;
     auto.heading = dir;
     return cand;
   }
@@ -722,6 +781,7 @@ function cameraTargets(out) {
   return out;
 }
 function follow(dt) {
+  if (fleetView()) { followFleet(dt); ship.setView(camera); return; }
   if (view.mode === 'free') {
     const f = a => held(FREE_KEYS, freeKeys, a), sp = free.speed * (f('fast') ? 3 : 1) * dt, cp = Math.cos(free.pitch);
     camDir.set(-Math.sin(free.yaw) * cp, Math.sin(free.pitch), -Math.cos(free.yaw) * cp);
@@ -739,7 +799,7 @@ function follow(dt) {
   }
   const target = cameraTargets(tmpV);
   if (view.mode === 'entering' || view.mode === 'leaving') {
-    view.t = reduced ? 1 : Math.min(1, view.t + dt / GLIDE);
+    view.t = reduced ? 1 : Math.min(1, view.t + dt / (view.dur || GLIDE));
     const e = view.t * view.t * (3 - 2 * view.t), f = view.from, to = view.to;
     chase.dist = f.dist + (to.dist - f.dist) * e;
     chase.yaw = f.yaw + wrapAngle(to.yaw - f.yaw) * e;
@@ -849,23 +909,27 @@ function loadPlanets(first) {
       const seen = planets.filter(q => q !== p && q.group.position.clone().sub(pos).normalize().dot(dir) > 0.75).length;
       if (!best || seen > best.seen) best = { p, pos, seen };
     }
-    ship.root.position.copy(best.pos);
-    const d = best.p.group.position.clone().sub(best.pos);
-    ship.root.position.y = best.p.group.position.y; // level with it, so it sits ahead of the ship
-    flight.yaw = Math.atan2(-d.x, -d.z) + 0.22;
+    if (best) {
+      ship.root.position.copy(best.pos);
+      const d = best.p.group.position.clone().sub(best.pos);
+      ship.root.position.y = best.p.group.position.y; // level with it, so it sits ahead of the ship
+      flight.yaw = Math.atan2(-d.x, -d.z) + 0.22;
+    }
   }
-  refreshShip(examples);
+  refreshShip(examples, first);
 }
 
 // The money shown on the ship: from saved data, or from the example planets when there is none yet.
 const PEAK_KEY = 'stashtronauts-debt-peak'; // the most ever owed, so the tow pod can shrink as debt is paid
-function refreshShip(examples) {
+function refreshShip(examples, first = false) {
   const tint = id => planets.find(p => p.id === id)?.look.biome.tint;
   let info;
   if (examples) {
-    info = { totalSaved: EXAMPLES.reduce((t, e) => t + e.amount, 0), goals: EXAMPLES.map(e => ({ id: e.id, name: e.label, progress: e.progress })),
-      emergencyMonths: 3100 / 2000, hasEmergencyFund: true, debt: 0, towPod: false };
+    info = { totalSaved: EXAMPLES.reduce((t, e) => t + e.amount, 0) + EXAMPLE_FUND, goals: EXAMPLES.map(e => ({ id: e.id, name: e.label, progress: e.progress })),
+      emergencyMonths: EXAMPLE_FUND / 2000, emergencyAmount: EXAMPLE_FUND, hasEmergencyFund: true, debt: 0, towPod: false };
   } else info = shipMoney(load());
+  fleet.setFund({ has: info.hasEmergencyFund, amount: info.emergencyAmount, months: info.emergencyMonths, unit: load().ship?.fighterUnit || 100, first });
+  updateFleetHud();
   info.shipName = load().ship?.name || '';
   info.goals = info.goals.map(g => ({ ...g, color: tint(g.id) }));
   let peak = 0;
@@ -878,7 +942,33 @@ addEventListener('storage', e => { if (e.key === KEY || e.key === NAMES_KEY) loa
 // Messages from the ship console.
 addEventListener('stash:change', () => loadPlanets());
 addEventListener('stash:thumbs', () => { for (const p of planets) if (!thumbQueue.includes(p)) thumbQueue.push(p); });
-addEventListener('stash:show', e => { const p = planets.find(q => q.id === e.detail?.id); if (p) showPlanet(p); });
+addEventListener('stash:show', e => {
+  const p = planets.find(q => q.id === e.detail?.id);
+  if (p) showPlanet(p);
+  else if (goalsOf(load()).some(g => g.id === e.detail?.id && isEmergencyFund(g))) enterFleet();   // the fund is the fleet
+});
+
+// ---------- The fleet's HUD: a shield button with a plain-English line, and a button that shows the fleet ----------
+const fleetHud = document.getElementById('fleetHud'), fleetBtn = document.getElementById('fleetBtn'), fleetLine = document.getElementById('fleetLine'), fleetGo = document.getElementById('fleetGo');
+function updateFleetHud() {
+  const f = fleet.info();
+  if (!f.has) fleetLine.innerHTML = 'No emergency fund set yet. <span>Make a savings goal called "Emergency fund" and a guardian ship will come to keep watch.</span>';
+  else if (!f.tier) fleetLine.innerHTML = `Emergency fund: ${fmt(f.amount)} saved so far. <span>A patrol ship arrives with your first deposit.</span>`;
+  else {
+    const months = f.months >= 0.95 ? `about ${Math.round(f.months * 10) / 10} months` : 'part of a month';
+    fleetLine.innerHTML = `Emergency fund: ${fmt(f.amount)} saved. ${f.label} on duty, ${f.total} fighter${f.total === 1 ? '' : 's'} (${f.active} on patrol, ${f.reserve} in reserve).`
+      + `<span>That covers ${months} of costs. An emergency fund is money kept aside for surprises, like a car repair. One fighter for every ${fmt(f.unit)}.</span>`;
+  }
+  fleetGo.hidden = !f.tier;
+  fleetBtn.classList.toggle('on', !!f.tier);
+}
+fleetBtn.addEventListener('click', () => { const open = !fleetHud.classList.contains('open'); fleetHud.classList.toggle('open', open); fleetBtn.setAttribute('aria-expanded', open); });
+fleetGo.addEventListener('click', () => { fleetView() ? leaveFleet() : enterFleet(); fleetHud.classList.remove('open'); fleetBtn.setAttribute('aria-expanded', false); });
+addEventListener('pointerdown', e => { if (!fleetHud.contains(e.target)) { fleetHud.classList.remove('open'); fleetBtn.setAttribute('aria-expanded', false); } });
+// A short message near the top, for things like "New fighter added".
+const toastEl = document.getElementById('toast');
+let toastTimer = 0;
+function toast(msg) { toastEl.textContent = msg; toastEl.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, 6500); updateFleetHud(); }
 addEventListener('pageshow', e => { if (e.persisted) loadPlanets(); });
 addEventListener('resize', resize);
 
@@ -926,6 +1016,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (dialogOpen()) keys.clear(); // no flying while the console is open
   fly(dt);
+  try { fleet.update(dt, { camera, reduced }); } catch (e) { console.error(e); }   // a fleet hiccup must never stop the whole scene
   follow(dt);
   // Planets grow toward their size, and glow softly for a moment after their goal changes.
   for (const p of planets) {

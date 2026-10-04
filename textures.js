@@ -555,3 +555,156 @@ export function boxLabelTexture(text, bg = '#E8E2D2') {
   g.fillStyle = '#26241F'; g.font = '800 22px Nunito, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 64, 26);
   const t = tex(c, { color: true }); labelCache.set(key, t); return t;
 }
+
+// ---------- The guardian fleet (fleet.js) ----------
+// Armour plating in greys, used as a map under dark material colours: panels, seams, rivets, scuffs and grime.
+// It tiles every 8 world units, so it works on any size of hull.
+export function armorTexture(seed = 21) {
+  const S = 512, cv = canvas(S, S), c = cv.getContext('2d'), rand = rng(seed);
+  c.fillStyle = '#C4C4C4'; c.fillRect(0, 0, S, S);
+  // Plates of different sizes, each a slightly different shade.
+  const rows = [0, 96, 160, 288, 352, 448, 512];
+  for (let r = 0; r < rows.length - 1; r++) {
+    let x = -rand() * 120;
+    while (x < S) {
+      const w = 90 + rand() * 150, v = 175 + rand() * 40 | 0;
+      c.fillStyle = `rgb(${v},${v},${v})`; c.fillRect(x, rows[r], w, rows[r + 1] - rows[r]);
+      // Seam and a row of rivets along the plate's edges.
+      c.fillStyle = 'rgba(30,30,30,0.85)'; c.fillRect(x, rows[r], 2, rows[r + 1] - rows[r]);
+      c.fillStyle = 'rgba(70,70,70,0.9)';
+      for (let y = rows[r] + 8; y < rows[r + 1] - 4; y += 12) { c.beginPath(); c.arc(x + 7, y, 1.6, 0, 7); c.fill(); }
+      for (let xx = x + 10; xx < x + w - 4; xx += 14) { c.beginPath(); c.arc(xx, rows[r] + 7, 1.6, 0, 7); c.fill(); }
+      x += w;
+    }
+    c.fillStyle = 'rgba(30,30,30,0.85)'; c.fillRect(0, rows[r], S, 2);
+  }
+  // Inspection hatches and vent slots here and there.
+  for (let i = 0; i < 7; i++) {
+    const x = rand() * (S - 60), y = rand() * (S - 40), w = 24 + rand() * 40, h = 16 + rand() * 26;
+    c.strokeStyle = 'rgba(40,40,40,0.8)'; c.lineWidth = 2; c.strokeRect(x, y, w, h);
+    if (rand() < 0.5) { c.fillStyle = 'rgba(30,30,30,0.7)'; for (let k = 4; k < h - 3; k += 5) c.fillRect(x + 4, y + k, w - 8, 2); }
+  }
+  // Wear: soot and grime streaks, lighter scratches on the edges.
+  for (let i = 0; i < 26; i++) {
+    const x = rand() * S, y = rand() * S, len = 30 + rand() * 120, g = c.createLinearGradient(x, y, x, y + len);
+    g.addColorStop(0, 'rgba(20,20,20,0.35)'); g.addColorStop(1, 'rgba(20,20,20,0)'); c.fillStyle = g; c.fillRect(x, y, 3 + rand() * 10, len);
+  }
+  c.lineWidth = 1;
+  for (let i = 0; i < 60; i++) { const x = rand() * S, y = rand() * S, l = 4 + rand() * 22, a = rand() * 6.3; c.strokeStyle = `rgba(250,250,250,${0.2 + rand() * 0.3})`; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * l, y + Math.sin(a) * l); c.stroke(); }
+  for (let i = 0; i < 10; i++) { c.fillStyle = `rgba(25,25,25,${0.1 + rand() * 0.15})`; c.beginPath(); c.ellipse(rand() * S, rand() * S, 20 + rand() * 50, 10 + rand() * 30, rand() * 3, 0, 7); c.fill(); }
+  return tex(cv, { color: true, repeat: [1, 1] });
+}
+// Rows of small lit windows for the command tower: warm and cool lamps, some dark.
+export function windowRowsTexture(seed = 4) {
+  const W = 256, H = 128, cv = canvas(W, H), c = cv.getContext('2d'), rand = rng(seed);
+  c.fillStyle = '#0B0E10'; c.fillRect(0, 0, W, H);
+  for (let y = 10; y < H - 8; y += 20) for (let x = 6; x < W - 10; x += 14) {
+    const r = rand();
+    c.fillStyle = r < 0.25 ? '#1A2226' : r < 0.6 ? '#F5D58A' : r < 0.85 ? '#BFE7FF' : '#9FF0C8';
+    c.fillRect(x, y, 9, 7);
+  }
+  return tex(cv, { color: true, repeat: [1, 1] });
+}
+// The hangar deck: dark non-slip plating with yellow taxi lines and numbered parking boxes.
+export function deckTexture() {
+  const S = 256, cv = canvas(S, S), c = cv.getContext('2d'), rand = rng(9);
+  c.fillStyle = '#3A3F42'; c.fillRect(0, 0, S, S);
+  c.fillStyle = 'rgba(255,255,255,0.05)';
+  for (let y = 4; y < S; y += 8) for (let x = (y / 8 % 2) * 4; x < S; x += 8) c.fillRect(x, y, 3, 1.5);
+  c.strokeStyle = 'rgba(15,15,15,0.7)'; c.lineWidth = 2; c.strokeRect(1, 1, S - 2, S - 2);
+  for (let i = 0; i < 8; i++) { c.fillStyle = `rgba(10,10,10,${0.1 + rand() * 0.15})`; c.beginPath(); c.ellipse(rand() * S, rand() * S, 10 + rand() * 30, 6 + rand() * 18, rand() * 3, 0, 7); c.fill(); }
+  c.fillStyle = '#E2B53E'; c.fillRect(0, S / 2 - 3, S, 6);   // the taxi line along each parking box
+  c.strokeStyle = 'rgba(226,181,62,0.8)'; c.lineWidth = 3; c.strokeRect(30, 30, S - 60, S / 2 - 50);
+  return tex(cv, { color: true, repeat: [1, 1] });
+}
+// All the fleet's markings on one sheet, so they share one material. Every design here is original.
+// Regions (u0, v0, u1, v1 in 0..1, v from the top): see DECALS in fleet.js.
+export function fleetDecalTexture() {
+  const W = 1024, H = 512, cv = canvas(W, H), c = cv.getContext('2d');
+  c.clearRect(0, 0, W, H);
+  // 1. The guardian badge: a rounded shield with a small planet held in a protective arc and three stars.
+  const badge = (cx, cy, s) => {
+    c.save(); c.translate(cx, cy); c.scale(s, s);
+    c.beginPath(); c.moveTo(0, -100); c.bezierCurveTo(60, -100, 85, -90, 92, -80); c.lineTo(88, 10); c.bezierCurveTo(80, 60, 40, 90, 0, 110); c.bezierCurveTo(-40, 90, -80, 60, -88, 10); c.lineTo(-92, -80); c.bezierCurveTo(-85, -90, -60, -100, 0, -100); c.closePath();
+    c.fillStyle = '#C9CFC4'; c.fill(); c.lineWidth = 6; c.strokeStyle = '#1B1E1F'; c.stroke();
+    c.beginPath(); c.moveTo(0, -84); c.bezierCurveTo(50, -84, 70, -76, 76, -68); c.lineTo(72, 8); c.bezierCurveTo(66, 50, 34, 74, 0, 92); c.bezierCurveTo(-34, 74, -66, 50, -72, 8); c.lineTo(-76, -68); c.bezierCurveTo(-70, -76, -50, -84, 0, -84); c.closePath();
+    c.fillStyle = '#2F4A36'; c.fill();
+    c.beginPath(); c.arc(0, 8, 26, 0, 7); c.fillStyle = '#7FE0C2'; c.fill();
+    c.beginPath(); c.arc(0, 8, 46, Math.PI * 0.15, Math.PI * 0.85); c.lineWidth = 9; c.strokeStyle = '#E8E4D2'; c.stroke();
+    c.beginPath(); c.arc(0, 8, 46, Math.PI * 1.15, Math.PI * 1.85); c.stroke();
+    c.fillStyle = '#E8E4D2';
+    for (const [x, y] of [[-30, -52], [0, -60], [30, -52]]) { c.beginPath(); for (let k = 0; k < 10; k++) { const r = k % 2 ? 4 : 10, a = -Math.PI / 2 + k * Math.PI / 5; c.lineTo(x + Math.cos(a) * r, y + Math.sin(a) * r); } c.fill(); }
+    c.restore();
+  };
+  badge(128, 128, 1.1);
+  // 2. The round authority seal: a ring with a chevron and a beacon lamp.
+  c.save(); c.translate(384, 128);
+  c.beginPath(); c.arc(0, 0, 112, 0, 7); c.fillStyle = '#1B1E1F'; c.fill();
+  c.beginPath(); c.arc(0, 0, 100, 0, 7); c.fillStyle = '#C9CFC4'; c.fill();
+  c.beginPath(); c.arc(0, 0, 80, 0, 7); c.fillStyle = '#2F4A36'; c.fill();
+  c.fillStyle = '#E8E4D2'; c.beginPath(); c.moveTo(-50, 20); c.lineTo(0, -20); c.lineTo(50, 20); c.lineTo(50, 42); c.lineTo(0, 2); c.lineTo(-50, 42); c.closePath(); c.fill();
+  c.beginPath(); c.arc(0, -42, 14, 0, 7); c.fillStyle = '#7FD2FF'; c.fill();
+  c.font = '800 20px Nunito, system-ui, sans-serif'; c.textAlign = 'center'; c.fillStyle = '#1B1E1F';
+  for (let i = 0; i < 16; i++) { const a = -Math.PI / 2 + i * Math.PI / 8; c.beginPath(); c.arc(Math.cos(a) * 90, Math.sin(a) * 90, 3, 0, 7); c.fill(); }
+  c.restore();
+  // 3. Warning chevrons (yellow and black), a long strip.
+  c.save(); c.beginPath(); c.rect(512, 0, 512, 64); c.clip();
+  c.fillStyle = '#D9A92E'; c.fillRect(512, 0, 512, 64); c.fillStyle = '#151718';
+  for (let x = 480; x < 1060; x += 64) { c.beginPath(); c.moveTo(x, 0); c.lineTo(x + 32, 0); c.lineTo(x + 96, 64); c.lineTo(x + 64, 64); c.fill(); }
+  c.restore();
+  // 4. "GUARDIAN PATROL" lettering.
+  c.font = '800 54px Nunito, system-ui, sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillStyle = '#D8DCD2'; c.fillText('GUARDIAN PATROL', 768, 104);
+  // 5. The patrol stripe: a broad dark green slash with a thin mint pinstripe.
+  c.save(); c.beginPath(); c.rect(512, 144, 512, 112); c.clip();
+  c.fillStyle = '#2F4A36'; c.beginPath(); c.moveTo(560, 256); c.lineTo(700, 144); c.lineTo(860, 144); c.lineTo(720, 256); c.fill();
+  c.fillStyle = '#7FE0C2'; c.beginPath(); c.moveTo(740, 256); c.lineTo(880, 144); c.lineTo(900, 144); c.lineTo(760, 256); c.fill();
+  c.restore();
+  // 6. "CAUTION · KEEP CLEAR" for the hangar lip and engines.
+  c.fillStyle = '#D9A92E'; c.fillRect(0, 272, 512, 56);
+  c.font = '800 34px Nunito, system-ui, sans-serif'; c.fillStyle = '#151718'; c.fillText('CAUTION · KEEP CLEAR', 256, 302);
+  // 7. Hangar bay numbers 1-16, in 4 rows of 4 (each cell 64 x 46).
+  c.font = '800 34px Nunito, system-ui, sans-serif';
+  for (let i = 0; i < 16; i++) { const x = 512 + (i % 8) * 64, y = 272 + Math.floor(i / 8) * 56; c.fillStyle = '#D9A92E'; c.fillText(String(i + 1).padStart(2, '0'), x + 32, y + 30); }
+  // 8. Serial-number band (the serial itself is drawn per tier with serialTexture).
+  return tex(cv, { color: true });
+}
+// The hull serial and a small "rescue and assist" line under it.
+export function serialTexture(serial) {
+  const W = 512, H = 128, cv = canvas(W, H), c = cv.getContext('2d');
+  c.font = '800 84px Nunito, system-ui, sans-serif'; c.textAlign = 'left'; c.textBaseline = 'middle';
+  c.fillStyle = '#D8DCD2'; c.fillText(serial, 8, 52);
+  c.font = '700 22px Nunito, system-ui, sans-serif'; c.fillStyle = '#7FE0C2'; c.fillText('RESCUE · ASSIST · ESCORT', 12, 112);
+  return tex(cv, { color: true });
+}
+// Racks of fuel cells and crates seen at the back of the hangar.
+export function rackTexture() {
+  const W = 256, H = 128, cv = canvas(W, H), c = cv.getContext('2d'), rand = rng(17);
+  c.fillStyle = '#25292B'; c.fillRect(0, 0, W, H);
+  for (let y = 0; y < H; y += 32) {
+    c.fillStyle = '#4A5054'; c.fillRect(0, y + 28, W, 4);
+    for (let x = 4; x < W; x += 20) {
+      const r = rand();
+      c.fillStyle = r < 0.5 ? '#3E6B4A' : r < 0.8 ? '#5E6A70' : '#B58A2E'; c.fillRect(x, y + 6, 14, 22);
+      c.fillStyle = 'rgba(255,255,255,0.18)'; c.fillRect(x + 2, y + 8, 3, 18);
+      if (r >= 0.8) { c.fillStyle = '#151718'; c.fillRect(x, y + 14, 14, 3); }
+    }
+  }
+  return tex(cv, { color: true, repeat: [1, 1] });
+}
+// A screen full of glowing lines for the bridge consoles.
+export function consoleGlowTexture() {
+  const W = 128, H = 64, cv = canvas(W, H), c = cv.getContext('2d'), rand = rng(3);
+  c.fillStyle = '#062019'; c.fillRect(0, 0, W, H);
+  c.strokeStyle = '#7FE0C2'; c.lineWidth = 2; c.beginPath();
+  for (let x = 0; x < W; x += 4) c.lineTo(x, 32 + Math.sin(x * 0.15) * 10 + (rand() - 0.5) * 6); c.stroke();
+  c.fillStyle = '#7FD2FF'; for (let i = 0; i < 6; i++) c.fillRect(6 + i * 20, 50, 12, 8 * rand() + 2);
+  return tex(cv, { color: true });
+}
+// A soft round glow for lamps, beacons and engine light.
+export function softGlowTexture() {
+  const S = 64, cv = canvas(S, S), c = cv.getContext('2d'), g = c.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.6)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = g; c.fillRect(0, 0, S, S);
+  return tex(cv, { color: true });
+}

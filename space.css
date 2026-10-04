@@ -6,7 +6,7 @@ canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:
 canvas.dragging{cursor:grabbing}
 
 .bar{position:fixed;top:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;pointer-events:none}
+  padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;pointer-events:none;z-index:10}
 .bar>*{pointer-events:auto}
 h1{margin:0;font-size:1.3rem;font-weight:800;letter-spacing:.2px;text-shadow:0 2px 8px rgba(0,0,0,.6)}
 
@@ -29,3 +29,19 @@ button:focus-visible,canvas:focus-visible,a:focus-visible,input:focus-visible,se
 .hint[hidden]{display:none}
 .hint b{color:var(--warm)}
 .hint kbd{display:inline-block;min-width:1.6em;margin-right:2px;padding:1px 6px;border-radius:6px;background:rgba(255,255,255,.1);border:1px solid var(--line);font:700 .8rem 'Nunito',system-ui,sans-serif;text-align:center}
+
+/* The emergency fund fleet: a shield button that shows a plain-English line on hover, focus or click. */
+.fleet-hud{position:relative;display:inline-flex}
+.hud-btn.icon{padding:8px 12px}
+.hud-btn.icon svg{stroke:var(--mute)}
+.hud-btn.icon.on svg{stroke:var(--accent)}
+.fleet-tip{display:none;position:absolute;right:0;top:100%;padding-top:8px;width:340px;z-index:5}
+.fleet-tip>div{background:var(--panel);border:1.5px solid var(--line);border-radius:14px;padding:12px 14px;backdrop-filter:blur(8px);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.fleet-hud:hover .fleet-tip,.fleet-hud:focus-within .fleet-tip,.fleet-hud.open .fleet-tip{display:block}
+.fleet-tip p{margin:0 0 10px;font-size:.92rem;line-height:1.4;font-weight:700}
+.fleet-tip p span{display:block;margin-top:6px;font-weight:400;color:var(--mute);font-size:.85rem}
+.hud-btn.small{min-height:36px;padding:6px 14px;font-size:.9rem}
+.toast{position:fixed;top:calc(112px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);margin:0;background:var(--panel);border:1.5px solid var(--accent);
+  border-radius:999px;padding:8px 18px;font-weight:800;box-shadow:0 0 22px rgba(127,224,194,.3);backdrop-filter:blur(6px)}
+.toast[hidden]{display:none}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}

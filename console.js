@@ -1,7 +1,7 @@
 // Ship console: the money tracker, as a landscape tablet that lifts up over the space view.
 // It edits the same saved data the tracker always used, and tells the 3D world when something changes.
 // Money is entered in a separate small dialog with a keypad (the "pad").
-import { load, save, blank, sample, uid, fmt, esc, sum, dateIn, sim, goalsOf, limitsOf, planetNames, isEmpty, amount, KEY } from './money.js';
+import { load, save, blank, sample, uid, fmt, esc, sum, dateIn, sim, goalsOf, limitsOf, planetNames, isEmpty, amount, isEmergencyFund, KEY } from './money.js';
 
 const $ = s => document.querySelector(s);
 const dlg = $('#console'), panel = $('#panel'), side = $('#side'), worth = $('#worthLine'), live = $('#live'), pad = $('#pad'), opener = $('#openConsole');
@@ -18,7 +18,8 @@ let armed = null;    // something waiting for a second click to confirm removal
 let returnFocus = null;
 
 const find = id => id === 'extra' ? { name: 'extra payments', extra: true } : [...S.assets, ...S.debts, ...S.cores].find(x => x.id === id);
-const mythOf = id => planetNames(goalsOf(S))[id]?.myth || 'Your planet';
+// The emergency fund isn't a planet: it's guarded by the fleet in space.
+const mythOf = id => isEmergencyFund(S.cores.find(c => c.id === id) || {}) ? 'Guardian fleet' : planetNames(goalsOf(S))[id]?.myth || 'Your planet';
 const pct = c => Math.round(Math.min(1, c.amount / c.target) * 100);
 const goals = () => S.cores.filter(c => c.type === 'goal'); // newest first
 const daysAboard = () => Math.max(1, Math.floor((Date.now() - new Date(S.ship.since + 'T00:00')) / 864e5) + 1);
@@ -256,7 +257,7 @@ function vShip() {
       <input id="pilotName" data-f="ship-pilot" data-k="ship-pilot" maxlength="28" placeholder="Pilot" value="${esc(S.ship.pilot || '')}">
       <label class="toggle" for="towPod"><input type="checkbox" id="towPod" data-f="ship-tow" data-k="ship-tow" ${S.ship.towPod ? 'checked' : ''}>
         <span><b>Tow a debt pod behind my ship</b><small>A little pod on a line that shrinks as you pay down what you owe. Off unless you want it.</small></span></label></div>
-    <div class="panelbox"><h4>Controls</h4>
+    <div class="panelbox"><h4>Controls and settings</h4>
       <dl class="controls">
         <dt>W A S D or arrows</dt><dd>Fly forward, back, and turn</dd>
         <dt>Space</dt><dd>Fly up</dd>
@@ -265,7 +266,10 @@ function vShip() {
         <dt>Drag / scroll</dt><dd>Look around / zoom. Zoom in close to see inside.</dd>
         <dt>F</dt><dd>Free camera: W A S D to move, Q and E down and up, drag to look, scroll for speed, Shift to go faster. F or Esc to come back.</dd>
       </dl>
-      <p class="note">Keys are ignored while the console is open or you're typing.</p></div>
+      <p class="note">Keys are ignored while the console is open or you're typing.</p>
+      <label class="field" for="fighterUnit"><span>Dollars per fighter</span></label>
+      <input id="fighterUnit" type="number" inputmode="numeric" min="1" step="1" data-f="ship-fighter" data-k="ship-fighter" value="${S.ship.fighterUnit || 100}">
+      <p class="note">Your emergency fund's guardian ship gets one fighter for every this many dollars saved.</p></div>
     <div class="panelbox"><h4>Your data stays here</h4>
       <p class="note">No account and no bank connection. Everything is saved in this browser, on this computer only.</p>
       <p style="margin:14px 0 0">${isEmpty(S)
@@ -481,6 +485,7 @@ panel.addEventListener('change', e => {
   if (f === 'ship-name') S.ship.name = i.value.trim();
   else if (f === 'ship-pilot') S.ship.pilot = i.value.trim();
   else if (f === 'ship-tow') S.ship.towPod = i.checked;
+  else if (f === 'ship-fighter') S.ship.fighterUnit = Math.max(1, Math.round(parseFloat(i.value) || 100));
   else {
     const v = Math.max(0, parseFloat(i.value) || 0);
     if (f === 'extra') S.extra = v; else { const x = find(i.dataset.id); if (x) x[f] = v; }

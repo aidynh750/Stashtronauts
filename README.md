@@ -22,7 +22,7 @@ Replace the tabs with a free-flying space scene.
 - Planet looks are generated from layers (biome, landmarks, variation seeded from the name), so no two look the same
 - Tap a planet to zoom in and meet its residents, who have personalities and moods that follow your saving habits
 - Deposits arrive as cargo pods, transfers fly between planets by spaceship, planned withdrawals leave as supply ships, and unplanned ones arrive as asteroids that leave craters which heal as savings rebuild
-- An emergency fund acts as a planet shield
+- An emergency fund is guarded by a fleet: a mothership that grows with the months saved, and one fighter per $100 (a setting)
 - A paranoid, never-landing guide in a cluttered ship spots asteroids first and walks new users through a hands-on tutorial
 
 **Art direction:** original designs inspired by the calm, chunky worlds of Astroneer and the expressive characters of Tomodachi Life, built entirely in code.
