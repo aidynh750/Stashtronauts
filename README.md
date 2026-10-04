@@ -5,7 +5,7 @@ Turn your savings goals into planets you can watch grow. A friendly money tracke
 
 **Live demo:** https://YOUR-USERNAME.github.io/money-world/
 
-**Status:** The tracker works today. The planet world is in active development.
+**Status:** The tracker works today, and the first space view is live: your savings goals appear as planets you can pan, zoom and tap. The rest of the planet world is in active development.
 
 ## What it does today
 - **What you have:** track your accounts and see what you have minus what you owe
@@ -30,8 +30,8 @@ Replace the tabs with a free-flying space scene.
 ## Roadmap
 - [x] Working tracker: accounts, goals, budgets, debt payoff planner
 - [x] Live on GitHub Pages
-- [ ] Space view with pan and zoom
-- [ ] Procedurally generated planets
+- [x] Space view with pan and zoom
+- [x] Procedurally generated planets
 - [ ] Zoom into planets and meet residents
 - [ ] Money events: deposits, withdrawals, transfers
 - [ ] The guide and onboarding tutorial
@@ -40,13 +40,20 @@ Replace the tabs with a free-flying space scene.
 
 ## Technical highlights
 - Plain HTML, CSS, and JavaScript with no frameworks
-- A month-by-month payoff simulation (`sim()` in `app.js`) with compounding interest and rolled-over payments
+- A month-by-month payoff simulation (`sim()` in `tracker.js`) with compounding interest and rolled-over payments
 - State saved with `localStorage`, so there is no backend
+- A canvas space view (`space.js`) with parallax stars, pan and pinch zoom, and planets generated from a seed so the same name always gives the same planet
+- Respects `prefers-reduced-motion`
+
+## Files
+- `index.html`, `space.css`, `space.js`: the space view (home page)
+- `tracker.html`, `tracker.css`, `tracker.js`: the money tracker
+- `docs/STYLE.md`: the art style guide
 
 ## Run it locally
 1. Open this folder in VS Code
 2. Install the Live Server extension
-3. Right-click `index.html` and choose Open with Live Server
+3. Right-click `index.html` and choose Open with Live Server (the tracker is at `tracker.html`)
 
 ## Disclaimer
 This is a tracking tool, not financial advice.
