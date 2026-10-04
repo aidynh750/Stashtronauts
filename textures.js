@@ -708,3 +708,10 @@ export function softGlowTexture() {
   c.fillStyle = g; c.fillRect(0, 0, S, S);
   return tex(cv, { color: true });
 }
+// A small crisp round dot, for lights that keep the same size on screen however far away they are.
+export function dotTexture() {
+  const S = 32, cv = canvas(S, S), c = cv.getContext('2d'), g = c.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.55, 'rgba(255,255,255,1)'); g.addColorStop(0.8, 'rgba(255,255,255,0.35)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = g; c.fillRect(0, 0, S, S);
+  return tex(cv, { color: true });
+}

@@ -47,12 +47,14 @@ function makeNoise(seed) {
 }
 
 // ---------- Renderer, scene and camera ----------
-const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, powerPreference: 'high-performance' });
+// A logarithmic depth buffer keeps depth precise from the pilot's cabin (centimetres) to the guardian carrier (kilometres away),
+// so nothing flickers or clips. Custom shaders below include three's logdepth chunks for it.
+const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true, powerPreference: 'high-performance', logarithmicDepthBuffer: true });
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.localClippingEnabled = true; // for the ship's dollhouse cutaway
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, 1, 0.2, 6000);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.2, 40000);
 const coarse = matchMedia('(pointer: coarse)').matches; // phones and tablets get fewer pixels to draw
 
 function resize() {
@@ -167,10 +169,17 @@ function makeStars() {
   g.setAttribute('size', new THREE.BufferAttribute(size, 1));
   const m = new THREE.ShaderMaterial({
     uniforms: { pr: { value: 1 } }, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    vertexShader: `attribute float size; attribute vec3 color; varying vec3 vC; uniform float pr;
-      void main(){ vC = color; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = size * pr; }`,
-    fragmentShader: `varying vec3 vC;
-      void main(){ float d = length(gl_PointCoord - 0.5) * 2.0; float a = pow(max(1.0 - d, 0.0), 2.2); gl_FragColor = vec4(vC * a, 1.0); }`,
+    vertexShader: `#include <common>
+      #include <logdepthbuf_pars_vertex>
+      attribute float size; attribute vec3 color; varying vec3 vC; uniform float pr;
+      void main(){ vC = color; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_PointSize = size * pr;
+        #include <logdepthbuf_vertex>
+      }`,
+    fragmentShader: `#include <logdepthbuf_pars_fragment>
+      varying vec3 vC;
+      void main(){
+        #include <logdepthbuf_fragment>
+        float d = length(gl_PointCoord - 0.5) * 2.0; float a = pow(max(1.0 - d, 0.0), 2.2); gl_FragColor = vec4(vC * a, 1.0); }`,
   });
   const pts = new THREE.Points(g, m);
   pts.renderOrder = -2; pts.frustumCulled = false;
@@ -288,22 +297,31 @@ function surfaceHeight(look, h) {
 
 // The soft glowing atmosphere is two shells: a halo behind the planet and a haze over its edge.
 // Both are brighter on the side facing the sun.
-const ATMO_VERT = `varying vec3 vN; varying vec3 vWN; varying vec3 vP;
+const ATMO_VERT = `#include <common>
+#include <logdepthbuf_pars_vertex>
+varying vec3 vN; varying vec3 vWN; varying vec3 vP;
 void main(){ vN = normalize(normalMatrix * normal); vWN = normalize(mat3(modelMatrix) * normal);
-  vec4 mv = modelViewMatrix * vec4(position, 1.0); vP = mv.xyz; gl_Position = projectionMatrix * mv; }`;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0); vP = mv.xyz; gl_Position = projectionMatrix * mv;
+  #include <logdepthbuf_vertex>
+}`;
+const LOGDEPTH_FRAG = '#include <logdepthbuf_pars_fragment>\n';
 function atmosphere(color, radius) {
   const uniforms = { color: { value: new THREE.Color(color) }, sunDir: { value: SUN_DIR }, edge: { value: Math.sqrt(1 - 1 / (1.18 * 1.18)) }, boost: { value: 1 } };
   const halo = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.18, 48, 32), new THREE.ShaderMaterial({
     uniforms, vertexShader: ATMO_VERT, side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    fragmentShader: `uniform vec3 color; uniform vec3 sunDir; uniform float edge; uniform float boost; varying vec3 vN; varying vec3 vWN; varying vec3 vP;
-      void main(){ float k = clamp(-dot(vN, normalize(-vP)) / edge, 0.0, 1.0);
+    fragmentShader: LOGDEPTH_FRAG + `uniform vec3 color; uniform vec3 sunDir; uniform float edge; uniform float boost; varying vec3 vN; varying vec3 vWN; varying vec3 vP;
+      void main(){
+        #include <logdepthbuf_fragment>
+        float k = clamp(-dot(vN, normalize(-vP)) / edge, 0.0, 1.0);
         float lit = smoothstep(-0.45, 0.7, dot(normalize(vWN), sunDir));
         gl_FragColor = vec4(color * pow(k, 2.6) * (0.08 + 1.1 * lit) * boost, 1.0); }`,
   }));
   const haze = new THREE.Mesh(new THREE.SphereGeometry(radius * 1.035, 48, 32), new THREE.ShaderMaterial({
     uniforms, vertexShader: ATMO_VERT, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    fragmentShader: `uniform vec3 color; uniform vec3 sunDir; uniform float boost; varying vec3 vN; varying vec3 vWN; varying vec3 vP;
-      void main(){ float f = pow(1.0 - max(dot(vN, normalize(-vP)), 0.0), 2.4);
+    fragmentShader: LOGDEPTH_FRAG + `uniform vec3 color; uniform vec3 sunDir; uniform float boost; varying vec3 vN; varying vec3 vWN; varying vec3 vP;
+      void main(){
+        #include <logdepthbuf_fragment>
+        float f = pow(1.0 - max(dot(vN, normalize(-vP)), 0.0), 2.4);
         float lit = smoothstep(-0.25, 0.8, dot(normalize(vWN), sunDir));
         gl_FragColor = vec4(color * (f * 0.9 + 0.04) * lit * boost, 1.0); }`,
   }));
@@ -490,7 +508,7 @@ const pointers = new Map();
 let pinchDist = 0;
 const pinch = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
 function setZoom(d) {
-  if (fleetView()) { fleetCam.dist = clamp(d, fleet.size.L * 0.35, fleet.size.L * 3.5); return; }
+  if (fleetView()) { fleetCam.dist = clamp(d, fleetCam.close ? 2 : fleet.size.L * 0.08, fleet.size.L * 3.5); return; }
   if (view.mode === 'entering' || view.mode === 'leaving' || view.mode === 'free') return;   // the glide owns the camera; extra scrolling can't flip it
   if (view.mode === 'outside') {
     chase.tDist = clamp(d, ENTER_AT, 70);
@@ -591,9 +609,8 @@ function followFleet(dt) {
   if (!fleet.present) { leaveFleet(); return; }
   const c = fleet.toWorld(fleetCam.focus, fleetC), cp = Math.cos(fleetCam.pitch);
   fleetDir.set(Math.sin(fleetCam.yaw) * cp, Math.sin(fleetCam.pitch), Math.cos(fleetCam.yaw) * cp);
-  if (!fleetCam.close) fleetCam.dist = Math.max(fleetCam.dist, fleet.minDist(fleetDir) + 2);   // never inside the hull
   fleetPos.copy(c).addScaledVector(fleetDir, fleetCam.dist);
-  keepClear(fleetPos, 2, false);
+  keepClear(fleetPos, 2, !fleetCam.close, false);   // never inside a planet or the hull
   if (view.mode === 'toFleet') {
     fleetCam.t = reduced ? 1 : Math.min(1, fleetCam.t + dt / 3);
     const e = fleetCam.t * fleetCam.t * (3 - 2 * fleetCam.t);
@@ -647,21 +664,23 @@ cv.addEventListener('pointercancel', endPointer);
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * innerHeight : e.deltaY;
-  if (view.mode === 'free') { free.speed = clamp(free.speed * Math.exp(-px * 0.0015), 0.5, 60); return; } // scroll sets the free camera's speed
+  if (view.mode === 'free') { free.speed = clamp(free.speed * Math.exp(-px * 0.0015), 0.5, 900); return; } // scroll sets the free camera's speed (up to fast enough to fly along a carrier)
   zoom(Math.exp(px * 0.0012));
 }, { passive: false });
 
 // Never fly into a planet, and never drift off into nowhere.
 const clearance = p => p.look.radius * p.group.scale.x * 1.12;
-function keepClear(pos, pad, withFleet = true) {
+function keepClear(pos, pad, withFleet = true, bounded = true) {
   for (const p of planets) {
     tmpV.copy(pos).sub(p.group.position);
     const min = clearance(p) + pad;
     if (tmpV.length() < min) pos.copy(p.group.position).addScaledVector(tmpV.normalize(), min); // slide along it
   }
   if (withFleet) fleet.keepClear(pos, pad);   // and never into the guardian mothership
-  if (pos.length() > volume * 1.5) pos.setLength(volume * 1.5);
+  if (bounded && pos.length() > volume * 1.5) pos.setLength(volume * 1.5);
 }
+// The cameras (not the ship) may go far enough out to see the whole guardian fleet.
+const camReach = () => Math.max(volume * 1.5, fleet.reach);
 
 // ---------- Autopilot: when nobody is steering, cruise between waypoints, hover a while, and go somewhere new ----------
 const AUTO_AFTER = 3, CRUISE = 15, ARRIVE = 5;
@@ -788,8 +807,8 @@ function follow(dt) {
     free.pos.addScaledVector(camDir, (f('fwd') - f('back')) * sp);
     free.pos.x += Math.cos(free.yaw) * (f('right') - f('left')) * sp; free.pos.z -= Math.sin(free.yaw) * (f('right') - f('left')) * sp;
     free.pos.y += (f('up') - f('down')) * sp;
-    keepClear(free.pos, 0.5);                                     // never inside a planet, never lost in the void
-    if (free.pos.distanceTo(ship.root.position) > 160) free.pos.sub(ship.root.position).setLength(160).add(ship.root.position);
+    keepClear(free.pos, 0.5, true, false);                        // never inside a planet or the mothership's hull
+    if (free.pos.length() > camReach()) free.pos.setLength(camReach());   // never lost in the void
     camera.position.copy(free.pos); camera.rotation.set(free.pitch, free.yaw, 0, 'YXZ');
     // The cut stays on one side; it only moves to the other side once the camera is well clear of the hull over there.
     camLocal.copy(free.pos).sub(ship.root.position).applyQuaternion(qInv.copy(ship.root.quaternion).invert());
