@@ -265,6 +265,7 @@ function vShip() {
         <dt>Shift</dt><dd>Boost while flying forward</dd>
         <dt>Drag / scroll</dt><dd>Look around / zoom. Zoom in close to see inside.</dd>
         <dt>F</dt><dd>Free camera: W A S D to move, Q and E down and up, drag to look, scroll for speed, Shift to go faster. F or Esc to come back.</dd>
+        <dt>X</dt><dd>Below a planet's clouds: skip straight back up to space. (Or just fly up through the clouds.)</dd>
       </dl>
       <p class="note">Keys are ignored while the console is open or you're typing.</p>
       <label class="field" for="fighterUnit"><span>Dollars per fighter</span></label>

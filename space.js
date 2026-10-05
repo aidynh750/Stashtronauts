@@ -6,6 +6,7 @@ import { load, goalsOf, planetNames, shipMoney, isEmergencyFund, fmt, KEY, NAMES
 import { makeShip } from './ship.js';
 import { makeFleet } from './fleet.js';
 import { airProfile, airLevels, makeAirFX } from './atmosphere.js';
+import { makeSurface, SURF_ORIGIN, CLOUD_BASE, EXIT_ALT, ENTRY_ALT } from './surface.js';
 import { MOODS } from './pilot.js';
 
 const cv = document.getElementById('space');
@@ -531,6 +532,14 @@ const fleet = makeFleet({ planets: () => planets, clearance: p => autoClear(p), 
   volume: () => volume, toast: msg => toast(msg) });
 universe.add(fleet.root, fleet.fx);   // the mothership, and its tracers, missiles, smoke and practice drones
 const airFX = makeAirFX({ universe, camera, shipRadius: ship.radius });
+// Below the clouds: the surface of the planet you've flown down into (surface.js).
+const surface = makeSurface({ universe, scene, camera, sun: sunLight, makeNoise, rng });
+const veilEl = document.getElementById('cloudVeil'), layerEl = document.getElementById('layerLine');
+// descent: going down ('down', the clouds closing in) or null. noDescend: a planet just left, until the ship is clear of its clouds.
+const descent = { phase: null, planet: null, dir: new THREE.Vector3() };
+let noDescend = null, veil = 0, veilWant = 0, gearZone = 'high';
+const SURF_AIR = { maxSpeed: 180, flare: 0, shake: new THREE.Vector3(), fov: 0, starFade: 1, layer: 'Surface' };
+const surfLocal = new THREE.Vector3(), surfCam = new THREE.Vector3();
 // Speeds suit the big world: a comfortable top speed, and Shift ramps up to a fast cruise for crossing between planets.
 const MAX_SPEED = 70, MAX_BACK = 15, MAX_CLIMB = 25, TURN_RATE = 0.9, BOOST_MAX = 1500;
 const flight = { yaw: 0, speed: 0, yawVel: 0, climb: 0, accel: 0, turnTo: null };
@@ -574,6 +583,8 @@ addEventListener('keydown', e => {
   if (e.code === 'Escape' && fleetView()) { leaveFleet(); e.preventDefault(); return; }
   // DEBUG (temporary): L extends and retracts the landing gear, until landing on planets is built (it will call ship.setLandingGear).
   if (e.code === 'KeyL' && !e.ctrlKey) { if (!e.repeat) ship.setLandingGear(!ship.landingGear); return; }
+  // X: skip straight back up to space from a planet's surface (or from the clouds on the way down).
+  if (e.code === 'KeyX' && !e.ctrlKey && (surface.active || descent.phase)) { if (!e.repeat) skipToSpace(); e.preventDefault(); return; }
   if (view.mode === 'free') { if (FREE_KEYS[e.code]) { freeKeys.add(e.code); e.preventDefault(); } return; }
   if (!FLIGHT_KEYS[e.code]) return;
   if (view.mode !== 'outside') leaveInside();   // flying starts once the camera is back outside
@@ -644,7 +655,7 @@ freeBtn.addEventListener('click', () => toggleFree());
 // ---------- Free camera: detach from the ship and fly the camera anywhere, through the open hull into every room ----------
 const free = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, speed: 5, side: 1 };
 const camDir = new THREE.Vector3(), camLocal = new THREE.Vector3(), qInv = new THREE.Quaternion();
-function toggleFree() { if (fleetView()) return leaveFleet(); view.mode === 'free' ? leaveFree() : enterFree(); }
+function toggleFree() { if (surface.active) return; if (fleetView()) return leaveFleet(); view.mode === 'free' ? leaveFree() : enterFree(); }
 function enterFree() {
   if (view.mode === 'free') return;
   view.mode = 'free'; view.closeLate = false;
@@ -672,7 +683,7 @@ function leaveFree() {
 const fleetCam = { yaw: 0, pitch: 0.3, dist: 80, t: 0, from: new THREE.Vector3(), fromLook: new THREE.Vector3(), look: new THREE.Vector3(), focus: new THREE.Vector3(), close: false };
 const fleetView = () => view.mode === 'toFleet' || view.mode === 'fleet';
 function enterFleet() {
-  if (!fleet.present || fleetView()) return;
+  if (!fleet.present || fleetView() || surface.active) return;
   if (view.mode !== 'outside') { ship.setOpen(false); ship.setCutSide(null); }
   keys.clear(); freeKeys.clear(); auto.active = false; auto.idle = 0; flight.turnTo = null; chase.dragging = false;
   fleetCam.from.copy(camera.position); camera.getWorldDirection(camDir); fleetCam.fromLook.copy(camera.position).addScaledVector(camDir, 30);
@@ -845,8 +856,8 @@ function fly(dt) {
   auto.idle = steering || flight.turnTo !== null ? 0 : auto.idle + dt;
   if (boosting) thrustBoost = 1; else thrustBoost = 0;
   if (steering) { auto.active = false; auto.state = 'pick'; auto.heading = null; }
-  else if (!auto.active && auto.idle > AUTO_AFTER && !reduced && outside) auto.active = true;
-  if (reduced || !outside) auto.active = false;   // inside, the ship stays put
+  else if (!auto.active && auto.idle > AUTO_AFTER && !reduced && outside && !surface.active && !descent.phase) auto.active = true;
+  if (reduced || !outside || surface.active || descent.phase) auto.active = false;   // inside, on a surface or going down, the ship stays put
   if (!outside) insideLife(dt);
   const before = flight.speed;
   let cruising = false, thrust = ahead > 0 ? Math.min(1, 0.8 + 0.2 * thrustBoost) : 0;
@@ -876,13 +887,13 @@ function fly(dt) {
   }
   flight.yawVel += (want - flight.yawVel) * (1 - Math.exp(-dt * 3));
   flight.yaw += flight.yawVel * dt;
-  flight.climb += (climbIn * MAX_CLIMB - flight.climb) * (1 - Math.exp(-dt * 2));
+  flight.climb += (climbIn * MAX_CLIMB * (surface.active ? 2.4 : 1) - flight.climb) * (1 - Math.exp(-dt * 2));   // faster up and down below the clouds, where the drops are big
   ship.root.rotation.y = flight.yaw;
   fwd.set(-Math.sin(flight.yaw), 0, -Math.cos(flight.yaw));
   ship.root.position.addScaledVector(fwd, flight.speed * dt);
   ship.root.position.y += flight.climb * dt;
-  keepClear(ship.root.position, ship.radius + 2, true, true, false);
-  holdAtDeck(dt);
+  if (surface.active) flyLow(dt);
+  else { keepClear(ship.root.position, ship.radius + 2, true, true, false); holdAtDeck(dt); checkDescent(); }
   if (Math.abs(flight.speed) > 3) thrust = Math.min(1.25, thrust + air.flare);   // the engine flares a little in thin air
   ship.update(dt, { thrust, flying: steering, cruising: cruising || (auto.active && Math.abs(flight.speed) > 1), stopped: Math.abs(flight.speed) < 1,
     visible: shipOnScreen(), turn: clamp(flight.yawVel / TURN_RATE, -1, 1), turnVel: flight.yawVel,
@@ -895,16 +906,67 @@ function holdAtDeck(dt) {
   for (const p of planets) {
     const L = airLevels(p, ship.radius), rel = tmpV.copy(ship.root.position).sub(p.group.position), d = rel.length();
     if (d >= L.deck) continue;
-    // HOOK (Phase E): the descent to the surface plugs in here. When it exists, call descendToSurface(p) instead of
-    // holding the ship at the deck (and let the layer line offer it).
+    // Reaching the deck starts the way down (checkDescent); until the clouds have closed in, the deck still holds the ship.
     const nd = Math.max(d + (L.deck - d) * (1 - Math.exp(-dt * 6)), L.surf + ship.radius + 6);
     ship.root.position.copy(p.group.position).addScaledVector(rel.normalize(), nd);
     flight.climb *= Math.exp(-dt * 4);
   }
 }
-// Placeholder for Phase E (landing). Not called yet.
-// eslint-disable-next-line no-unused-vars
-function descendToSurface(planet) { /* Phase E: descend through the clouds to the planet's surface. */ }
+// ---------- Down to the surface and back ----------
+// Keep flying down through the cloud layer: at the deck the clouds close in completely (the veil), the space view is
+// swapped for the planet's surface underneath it, and you come out below the clouds. Climbing up past the cloud ceiling
+// (or X) does the same in reverse, and you come out at the same spot on the planet in space. The swap is never seen.
+function checkDescent() {
+  if (descent.phase) return;
+  for (const p of planets) {
+    const L = airLevels(p, ship.radius), rel = tmpV.copy(ship.root.position).sub(p.group.position), d = rel.length();
+    if (noDescend === p) { if (d > L.deck + 30) noDescend = null; continue; }
+    if (d < L.deck + 3) { descent.phase = 'down'; descent.planet = p; descent.dir.copy(rel).normalize(); return; }
+  }
+}
+function enterSurface(p) {
+  descent.phase = null;
+  surface.enter(p);
+  world.visible = false; fleet.root.visible = false; fleet.fx.visible = false; sky.visible = false; airFX.hide();
+  ship.root.position.copy(SURF_ORIGIN).y += ENTRY_ALT;
+  flight.climb = Math.min(flight.climb, -12); flight.speed = Math.min(flight.speed, 40);
+  ship.clearTrail(); chase.ready = false; gearZone = 'high';
+}
+function exitSurface() {
+  const p = surface.planet, L = airLevels(p, ship.radius);
+  surface.exit();
+  world.visible = true; fleet.root.visible = true; fleet.fx.visible = true; sky.visible = true;
+  ship.root.position.copy(p.group.position).addScaledVector(descent.dir, L.deck + 14);
+  flight.climb = Math.max(flight.climb, 6);
+  noDescend = p; ship.setLandingGear(false);
+  ship.clearTrail(); chase.ready = false;
+  if (layerEl) layerEl.hidden = true;
+}
+function skipToSpace() {
+  if (descent.phase) { descent.phase = null; noDescend = descent.planet; return; }
+  veil = 1; exitSurface();
+}
+// Flying low: a soft ground limit that looks ahead (so the ship lifts smoothly over rising ground and never touches it),
+// gentle storm wind, the landing gear on the final approach, and the way back up through the clouds.
+function flyLow(dt) {
+  const pos = ship.root.position, local = surfLocal.copy(pos).sub(SURF_ORIGIN);
+  const ahead = Math.max(0, flight.speed) * 0.7;
+  let ground = surface.floorAt(local.x, local.z);
+  for (const k of [-9, 9, ahead + 9]) ground = Math.max(ground, surface.floorAt(local.x + fwd.x * k, local.z + fwd.z * k));
+  const floor = ground + 9, soft = floor + 28;
+  if (local.y < soft && flight.climb < 0) flight.climb *= clamp((local.y - floor) / (soft - floor), 0, 1);   // ease the sink near the ground
+  if (local.y < floor) local.y += (floor - local.y) * (1 - Math.exp(-dt * 5));                              // lift over rising ground
+  local.y = Math.max(local.y, ground + 6);                                                                   // and never into it
+  const w = surface.state.storm ? surfOut.wind : null;
+  if (w) { local.x += w.x * dt; local.z += w.z * dt; }
+  pos.copy(SURF_ORIGIN).add(local);
+  // Landing gear: down on the final approach (low and slow), up again on the climb out. L still toggles it by hand.
+  const alt = local.y - surface.floorAt(local.x, local.z);
+  if (gearZone === 'high' && alt < 70 && Math.abs(flight.speed) < 35) { gearZone = 'low'; ship.setLandingGear(true); }
+  else if (gearZone === 'low' && (alt > 110 || Math.abs(flight.speed) > 50)) { gearZone = 'high'; ship.setLandingGear(false); }
+  if (local.y > EXIT_ALT) { veil = Math.max(veil, 0.99); exitSurface(); }
+}
+let surfOut = { wind: new THREE.Vector3(), veil: 0, alt: 0 };
 
 // Outside: third person, behind, above and a little to the side, following with a slight lag and easing back after a drag.
 // Inside: the ship holds still and the camera orbits its centre with no ease-back. It never comes closer than the ship's
@@ -962,7 +1024,8 @@ function follow(dt) {
     if (chase.dist < minD) { chase.dist = minD; chase.tDist = Math.max(chase.tDist, minD); }
   }
   desired.multiplyScalar(chase.dist).add(pivot);
-  keepClear(desired, 1.5);
+  if (surface.active) { surfCam.copy(desired).sub(SURF_ORIGIN); desired.y = Math.max(desired.y, SURF_ORIGIN.y + surface.floorAt(surfCam.x, surfCam.z) + 4); }
+  else keepClear(desired, 1.5);
   if (!chase.ready || reduced) { camera.position.copy(desired); chase.ready = true; }
   else camera.position.lerp(desired, 1 - Math.exp(-dt * (view.mode === 'outside' ? 5 + Math.abs(flight.speed) / 12 : 12)));
   camLookAt(tmpV.copy(pivot).addScaledVector(fwd, 1.5 * Math.cos(chase.yaw) * look));
@@ -1147,6 +1210,7 @@ function photograph(p) {
 const clock = new THREE.Clock();
 let elapsed = 0, rebases = 0;
 // Keep the dust in a box around the camera: specks that leave it come back in on the other side.
+const smooth01 = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 function wrapDust() {
   const a = dust.geometry.attributes.position, h = DUST_BOX / 2, c = camera.position;
   for (let i = 0; i < a.count; i++) for (let k = 0; k < 3; k++) {
@@ -1161,7 +1225,20 @@ function frame() {
   fly(dt);
   try { fleet.update(dt, { camera, reduced, calm: calmSpace }); } catch (e) { console.error(e); }   // a fleet hiccup must never stop the whole scene
   follow(dt);
-  air = airFX.update(dt, { planets, shipPos: ship.root.position, reduced, speed: Math.abs(flight.speed), following: !fleetView() && view.mode !== 'free' });
+  if (surface.active) {
+    surfOut = surface.update(dt, { shipLocal: surfLocal.copy(ship.root.position).sub(SURF_ORIGIN), camLocal: surfCam.copy(camera.position).sub(SURF_ORIGIN), reduced });
+    air = SURF_AIR; veilWant = surfOut.veil;
+    const text = `${surface.state.storm ? 'Stormy surface' : 'Surface'} · ${surface.planet.myth} · X back to space`;
+    if (layerEl && layerEl.textContent !== text) { layerEl.textContent = text; } if (layerEl) layerEl.hidden = false;
+  } else {
+    air = airFX.update(dt, { planets, shipPos: ship.root.position, reduced, speed: Math.abs(flight.speed), following: !fleetView() && view.mode !== 'free' });
+    // In the clouds the veil thickens toward the deck; going down it closes completely, then the surface takes over.
+    const st = airFX.state, L = st.levels;
+    veilWant = st.planet && L ? smooth01(L.deck + 22, L.deck, st.dist) * 0.85 : 0;
+    if (descent.phase === 'down') { veilWant = 1; if (veil > 0.985) enterSurface(descent.planet); }
+  }
+  veil += clamp(veilWant - veil, -dt * 1.6, dt * (descent.phase ? 3 : 1.6));
+  if (veilEl) { veilEl.style.opacity = veil.toFixed(3); if (surface.active || descent.planet) veilEl.style.background = '#' + (surface.planet || descent.planet).air.cloudTint.clone().lerp(new THREE.Color('#FFFFFF'), 0.4).getHexString(); }
   // In the clouds: a soft shake and a faint shimmer (both zero with reduced motion), only for the follow camera.
   const fov = view.mode === 'outside' ? baseFov + air.fov : baseFov;
   if (view.mode === 'outside') camera.position.add(air.shake);

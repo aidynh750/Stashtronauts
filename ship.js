@@ -244,6 +244,8 @@ export function makeShip(colors = SHIP_COLORS) {
   }
 
   // The trail and the tow pod live in render space; when the world is re-centred (space.js), shift them with it.
+  // After a jump (down to a surface and back), forget the trail so it doesn't stretch across the jump.
+  function clearTrail() { trailAge.fill(99); trailLast = null; }
   function rebase(d) {
     for (let i = 0; i < TRAIL; i++) { trailPos[i * 3] -= d.x; trailPos[i * 3 + 1] -= d.y; trailPos[i * 3 + 2] -= d.z; }
     trailGeo.attributes.position.needsUpdate = true;
@@ -252,7 +254,7 @@ export function makeShip(colors = SHIP_COLORS) {
   }
   const headPos = new THREE.Vector3();
   return {
-    root, body, pilot, crew, gear: outside, world: [trail, towPod.group, tether], radius: 9.5, setMoney, setView, update, rebase,
+    root, body, pilot, crew, gear: outside, world: [trail, towPod.group, tether], radius: 9.5, setMoney, setView, update, rebase, clearTrail,
     clickables: interior.clickables, blockedPaths: interior.blocked, checkExterior: () => outside.check(), // the dashboard screen: clicking it opens the console
     // 0 = solid hull, 1 = fully open cutaway. Set the target; it eases there.
     get open() { return open; }, get openTarget() { return openTarget; }, setOpen(v) { openTarget = v ? 1 : 0; },

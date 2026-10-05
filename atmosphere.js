@@ -2,7 +2,7 @@
 //   outer glow   from glowTop down to upperTop: the atmosphere ring brightens and the rim lights up as you approach
 //   upper layer  from upperTop down to cloudTop: a faint haze in the planet's sky colour, stars dim, the engine flares a little
 //   cloud layer  from cloudTop down to the deck: moving cloud sheets around the ship, soft shake, a light shimmer
-//   cloud deck   the bottom of the clouds: the ship is held here gently ("Surface coming soon") and never reaches the ground
+//   cloud deck   the bottom of the clouds: going below it hands over to the surface world (surface.js), hidden by a cloud veil
 // Everything grows smoothly with depth. Debt planets are stormy: darker clouds, rain and soft distant lightning, scaled by
 // how much is still owed. With reduced motion there is no shake, shimmer or rain movement: only gentle fades.
 import * as THREE from 'three';
@@ -126,7 +126,7 @@ export function makeAirFX({ universe, camera, shipRadius }) {
     }
     current = best;
     // The HUD line: which layer, and a gentle note at the deck.
-    const text = state.layer && following ? (state.layer === 'Cloud deck' ? `Cloud deck · ${best.myth} · Surface coming soon` : `${state.layer} · ${best.myth}`) : '';
+    const text = state.layer && following ? (state.layer === 'Cloud deck' ? `Cloud deck · ${best.myth} · keep going down to land` : `${state.layer} · ${best.myth}`) : '';
     if (line && text !== shown) { shown = text; line.textContent = text; line.hidden = !text; }
 
     // Cloud sheets around the camera.
@@ -194,5 +194,7 @@ export function makeAirFX({ universe, camera, shipRadius }) {
     if (flash.t > flash.rise + flash.fall) flash.t = 0;
     return lvl * flash.peak;
   }
-  return { update, state };
+  // While the ship is down on a surface: hide everything here and let the line be rewritten from scratch afterwards.
+  function hide() { puffGroup.visible = false; rain.visible = false; bolt.visible = false; if (tint) tint.style.opacity = '0'; shown = '\u0000'; inited = false; }
+  return { update, state, hide };
 }
