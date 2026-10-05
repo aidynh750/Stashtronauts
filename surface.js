@@ -5,10 +5,12 @@
 // Terrain is built in square chunks around the camera with three levels of detail, and bends down toward a curved
 // horizon that flattens as you come down. Debt planets keep their storm down here (rain, wind, soft lightning glows).
 import * as THREE from 'three';
+import { WORLD } from './settings.js';
 
-export const SURF_ORIGIN = new THREE.Vector3(0, -200000, 0);
-export const CLOUD_BASE = 520, EXIT_ALT = 760, ENTRY_ALT = 700;   // underside of the clouds, where you leave for space, where you arrive
-const CHUNK = 600, RINGS = 4, LODS = [[1, 48], [2, 24], [RINGS, 8]];   // chunk size; [ring up to, segments]
+const SW = WORLD.surface;
+export const SURF_ORIGIN = new THREE.Vector3(0, SW.origin, 0);
+export const CLOUD_BASE = SW.cloudBase, EXIT_ALT = SW.exitAlt, ENTRY_ALT = SW.entryAlt;   // underside of the clouds, where you leave for space, where you arrive
+const CHUNK = SW.chunk, RINGS = 4, LODS = [[1, 48], [2, 24], [RINGS, 8]];   // chunk size; [ring up to, segments]
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
 

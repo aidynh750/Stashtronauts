@@ -5,15 +5,16 @@
 // Every design here is original. Sizes are in world units (the player's ship is about 18 long). Ships face -Z.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { SHIP_LEN, WORLD } from './settings.js';
 import { armorTexture, windowRowsTexture, deckTexture, fleetDecalTexture, serialTexture, rackTexture, consoleGlowTexture, softGlowTexture, dotTexture } from './textures.js';
 
 export const MAX_ACTIVE = 24;
-// Sizes are multiples of the player's ship length (18.4). The carrier is about as long as the largest planet is wide.
-export const SHIP_LEN = 18.4;
+// Sizes are multiples of the player's ship length (settings.js). Counts of towers, antennas and buildings grow with the hull.
+const MS = WORLD.mothership;
 export const TIERS = {
-  frigate: { label: 'Patrol frigate', mult: 4, slots: 6, segs: 3, engines: [2, 3], towers: 4, turrets: 4, officers: 3, arms: 2, dishes: 3, antennas: 60, city: 0, serial: 'GP-104', seed: 11 },
-  cruiser: { label: 'Cruiser', mult: 10.7, slots: 10, segs: 5, engines: [3, 4], towers: 8, turrets: 8, officers: 4, arms: 4, dishes: 5, antennas: 220, city: 220, serial: 'GC-311', seed: 23 },
-  carrier: { label: 'Flagship carrier', mult: 32, slots: 16, segs: 8, engines: [4, 6], towers: 14, turrets: 12, officers: 6, arms: 6, dishes: 8, antennas: 700, city: 1600, serial: 'GF-001', seed: 37 },
+  frigate: { label: 'Patrol frigate', mult: MS.frigate, slots: 6, segs: 3, engines: [2, 3], towers: 6, turrets: 4, officers: 3, arms: 2, dishes: 4, antennas: 160, city: 0, serial: 'GP-104', seed: 11 },
+  cruiser: { label: 'Cruiser', mult: MS.cruiser, slots: 10, segs: 5, engines: [3, 4], towers: 14, turrets: 8, officers: 4, arms: 4, dishes: 7, antennas: 600, city: 1400, serial: 'GC-311', seed: 23 },
+  carrier: { label: 'Flagship carrier', mult: MS.carrier, slots: 16, segs: 8, engines: [4, 6], towers: 26, turrets: 12, officers: 6, arms: 6, dishes: 12, antennas: 2000, city: 4000, serial: 'GF-001', seed: 37 },
 };
 for (const t of Object.values(TIERS)) t.L = t.mult * SHIP_LEN;
 export const tierFor = (amount, months) => !(amount > 0) ? null : months < 3 ? 'frigate' : months < 6 ? 'cruiser' : 'carrier';
@@ -188,9 +189,11 @@ function fighterGeometry() {
 // the ship's own space (they don't slide when it moves), whole districts are lit or dark, and far away the pattern fades
 // smoothly into its average glow instead of shimmering.
 const HULL_UNIFORMS = { rimColor: { value: new THREE.Color('#3C4652') }, winColor: { value: new THREE.Color('#FFDCA8') } };
+// Windows are person-sized on the frigate and a little larger on the bigger ships, so they still read as rows of light.
+const winScale = L => clamp(Math.sqrt(L / 460), 1, 3);
 const WIN_GLSL = `{
   float side = 1.0 - smoothstep(0.3, 0.55, abs(vFN.y));
-  vec2 wp = vec2(abs(vFN.x) > abs(vFN.z) ? vFP.z : vFP.x, vFP.y) / vec2(0.8, 1.6);   // person-sized windows, decks about two people tall
+  vec2 wp = vec2(abs(vFN.x) > abs(vFN.z) ? vFP.z : vFP.x, vFP.y) / winSize;   // person-sized windows (bigger on bigger ships), decks about two people tall
   vec2 cell = floor(wp), f = fract(wp);
   float deck = step(0.42, fh(vec2(cell.y, 17.0)));                 // whole decks are lit or dark: rows of light
   float lit = step(0.3, fh(cell)) * deck;
@@ -200,16 +203,17 @@ const WIN_GLSL = `{
   w = mix(w, 0.58 * 0.7 * 0.19, smoothstep(0.35, 1.0, fw.y));                      // lines blur into a soft even glow
   totalEmissiveRadiance += winColor * w * side * mix(1.0, 0.45, smoothstep(0.35, 1.0, fw.x));   // far away the glow is softer
 }`;
-function hullShader(m, windows) {
+function hullShader(m, windows, wk = 1) {
+  const winSize = { value: new THREE.Vector2(0.8 * wk, 1.6 * wk) };
   m.onBeforeCompile = sh => {
-    Object.assign(sh.uniforms, HULL_UNIFORMS);
+    Object.assign(sh.uniforms, HULL_UNIFORMS, { winSize });
     sh.vertexShader = 'varying vec3 vFP; varying vec3 vFN;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
       vec4 fp4 = vec4(transformed, 1.0); vec3 fn3 = objectNormal;
       #ifdef USE_INSTANCING
         fp4 = instanceMatrix * fp4; fn3 = mat3(instanceMatrix) * fn3;
       #endif
       vFP = fp4.xyz; vFN = normalize(fn3);`);
-    sh.fragmentShader = 'uniform vec3 rimColor; uniform vec3 winColor; varying vec3 vFP; varying vec3 vFN;\nfloat fh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n'
+    sh.fragmentShader = 'uniform vec3 rimColor; uniform vec3 winColor; uniform vec2 winSize; varying vec3 vFP; varying vec3 vFN;\nfloat fh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }\n'
       + sh.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       ${windows ? WIN_GLSL : ''}
       totalEmissiveRadiance += rimColor * pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 4.0);`);
@@ -220,8 +224,9 @@ function hullShader(m, windows) {
 function shipMaterials(tx, tier) {
   // A faint glow from the armour itself keeps the shaded side readable (panel lines and rivets still show) without lifting the dark paint.
   const std = (color, o = {}) => new THREE.MeshStandardMaterial({ color, map: tx.armor, roughness: 0.82, metalness: 0.2, emissive: '#1C2024', emissiveMap: tx.armor, ...o });
+  const wk = winScale(TIERS[tier].L);
   return {
-    black: hullShader(std('#34383C'), true), steel: hullShader(std('#5C636A'), true), green: hullShader(std('#3E6049'), false),
+    black: hullShader(std('#34383C'), true, wk), steel: hullShader(std('#5C636A'), true, wk), green: hullShader(std('#3E6049'), false),
     dark: hullShader(std('#1A1C1E', { roughness: 0.6, emissive: '#0C0E10' }), false), plain: hullShader(std('#34383C'), false),
     interior: std('#6B7378', { emissive: '#3A4146', emissiveMap: tx.armor, emissiveIntensity: 0.55 }),
     deck: new THREE.MeshStandardMaterial({ map: tx.deck, roughness: 0.9, emissive: '#FFFFFF', emissiveMap: tx.deck, emissiveIntensity: 0.32 }),
@@ -247,8 +252,18 @@ function buildMothership(key) {
   const root = new THREE.Group(); root.name = 'mothership-' + key;
   const core = new THREE.Group(), detail = new THREE.Group();
   root.add(core, detail);
-  // Solid volumes in ship space, used to keep fighters, the player's ship and cameras out of the hull.
-  const boxes = [], solid = (x0, y0, z0, x1, y1, z1) => boxes.push([Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1), Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1)]);
+  // Solid volumes in ship space. `boxes` are coarse boxes the fighters steer around. `shapes` follow the hull closely and are
+  // what the player's ship (and the cameras) bump into: tapered octagonal sections for the main hull, decks, keel, wings and
+  // engine block (the same outlines as the armour), and boxes for towers, bay blocks, buildings, dishes and turret bases.
+  const boxes = [], shapes = [];
+  const solidF = (x0, y0, z0, x1, y1, z1) => boxes.push([Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1), Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1)]);
+  const shapeBox = (b, city = false) => shapes.push({ k: 0, b, city });
+  const solid = (...a) => { solidF(...a); shapeBox(boxes[boxes.length - 1]); };
+  // One tapered octagonal section per pair of rings, matching octLoft (rings along z, centred at x, y).
+  const loftShape = (rings, ck = 0.22) => {
+    const sec = r => { const hw = r.w / 2, hh = r.h / 2; return [r.x || 0, r.y || 0, hw, hh, Math.min(r.c ?? Math.min(r.w, r.h) * ck, hw * 0.9, hh * 0.9)]; };
+    for (let i = 0; i < rings.length - 1; i++) shapes.push({ k: 1, z0: rings[i].z, z1: rings[i + 1].z, a: sec(rings[i]), b: sec(rings[i + 1]) });
+  };
   const lift = Math.max(0.05, L * 0.00025);     // markings sit this far off the armour
 
   // ----- Layout. The main deck is the widest; decks above step back; a keel runs below; wings of armour on both sides. -----
@@ -256,7 +271,8 @@ function buildMothership(key) {
   const D = { key, L, W, H, k, boxes, radius: L * 0.56, bays: [], slots: 0, slotRefs: [] };
 
   // Main deck: a long pointed prow, then armoured segments with dark ribs and green bands.
-  put('black', octLoft([{ z: -L / 2, w: W * 0.04, h: H * 0.12, y: -H * 0.15 }, { z: -0.42 * L, w: W * 0.4, h: H * 0.55, y: -H * 0.1 }, { z: zn, w: W, h: H }]));
+  const prow = [{ z: -L / 2, w: W * 0.04, h: H * 0.12, y: -H * 0.15 }, { z: -0.42 * L, w: W * 0.4, h: H * 0.55, y: -H * 0.1 }, { z: zn, w: W, h: H }];
+  put('black', octLoft(prow)); loftShape(prow); loftShape([{ z: zn, w: W, h: H }, { z: zt, w: W, h: H }]);
   const gap = 0.012 * L, segLen = (zt - zn - (t.segs - 1) * gap) / t.segs, segs = [];
   for (let i = 0; i < t.segs; i++) {
     const z0 = zn + i * (segLen + gap), z1 = z0 + segLen; segs.push([z0, z1]);
@@ -264,15 +280,18 @@ function buildMothership(key) {
     put('green', octLoft([{ z: z0 + 0.008 * L, w: W * 1.012, h: H * 1.012 }, { z: z0 + 0.016 * L, w: W * 1.012, h: H * 1.012 }], { caps: false }));
     if (i < t.segs - 1) put('dark', octLoft([{ z: z1 - 0.1, w: W * 0.9, h: H * 0.88 }, { z: z1 + gap + 0.1, w: W * 0.9, h: H * 0.88 }], { caps: false }));
   }
-  solid(-W / 2, -H / 2, -L / 2, W / 2, H / 2, zt);
+  solidF(-W / 2, -H / 2, -L / 2, W / 2, H / 2, zt);
   // Keel below, and two stepped decks above, set back from the prow.
-  put('black', octLoft([{ z: -0.36 * L, w: W * 0.2, h: H * 0.2, y: -H * 0.55 }, { z: -0.28 * L, w: W * 0.5, h: H * 0.4, y: -H * 0.62 }, { z: 0.38 * L, w: W * 0.5, h: H * 0.4, y: -H * 0.62 }, { z: 0.44 * L, w: W * 0.36, h: H * 0.3, y: -H * 0.58 }]));
-  solid(-W * 0.25, -H * 0.82, -0.36 * L, W * 0.25, -H * 0.42, 0.44 * L);
-  put('steel', octLoft([{ z: -0.24 * L, w: W * 0.3, h: H * 0.2, y: H * 0.52 }, { z: -0.14 * L, w: W * 0.74, h: H * 0.5, y: H * 0.72 }, { z: 0.4 * L, w: W * 0.74, h: H * 0.5, y: H * 0.72 }, { z: 0.44 * L, w: W * 0.6, h: H * 0.4, y: H * 0.68 }]));
-  solid(-W * 0.37, H * 0.42, -0.24 * L, W * 0.37, H * 0.97, 0.44 * L);
+  const keel = [{ z: -0.36 * L, w: W * 0.2, h: H * 0.2, y: -H * 0.55 }, { z: -0.28 * L, w: W * 0.5, h: H * 0.4, y: -H * 0.62 }, { z: 0.38 * L, w: W * 0.5, h: H * 0.4, y: -H * 0.62 }, { z: 0.44 * L, w: W * 0.36, h: H * 0.3, y: -H * 0.58 }];
+  put('black', octLoft(keel)); loftShape(keel);
+  solidF(-W * 0.25, -H * 0.82, -0.36 * L, W * 0.25, -H * 0.42, 0.44 * L);
+  const upper = [{ z: -0.24 * L, w: W * 0.3, h: H * 0.2, y: H * 0.52 }, { z: -0.14 * L, w: W * 0.74, h: H * 0.5, y: H * 0.72 }, { z: 0.4 * L, w: W * 0.74, h: H * 0.5, y: H * 0.72 }, { z: 0.44 * L, w: W * 0.6, h: H * 0.4, y: H * 0.68 }];
+  put('steel', octLoft(upper)); loftShape(upper);
+  solidF(-W * 0.37, H * 0.42, -0.24 * L, W * 0.37, H * 0.97, 0.44 * L);
   const topX = W * 0.04;
-  put('black', octLoft([{ z: -0.04 * L, w: W * 0.24, h: H * 0.2, y: H * 1.06, x: topX }, { z: 0.02 * L, w: W * 0.46, h: H * 0.34, y: H * 1.12, x: topX }, { z: 0.34 * L, w: W * 0.46, h: H * 0.34, y: H * 1.12, x: topX }, { z: 0.38 * L, w: W * 0.36, h: H * 0.26, y: H * 1.1, x: topX }]));
-  solid(topX - W * 0.23, H * 0.95, -0.04 * L, topX + W * 0.23, H * 1.29, 0.38 * L);
+  const topDeck = [{ z: -0.04 * L, w: W * 0.24, h: H * 0.2, y: H * 1.06, x: topX }, { z: 0.02 * L, w: W * 0.46, h: H * 0.34, y: H * 1.12, x: topX }, { z: 0.34 * L, w: W * 0.46, h: H * 0.34, y: H * 1.12, x: topX }, { z: 0.38 * L, w: W * 0.36, h: H * 0.26, y: H * 1.1, x: topX }];
+  put('black', octLoft(topDeck)); loftShape(topDeck);
+  solidF(topX - W * 0.23, H * 0.95, -0.04 * L, topX + W * 0.23, H * 1.29, 0.38 * L);
   // Green trim bands along the step edges.
   for (const s of [-1, 1]) {
     put('green', at(boxG(W * 0.02, H * 0.03, 0.5 * L), s * W * 0.37, H * 0.95, 0.15 * L));
@@ -281,10 +300,11 @@ function buildMothership(key) {
   // Wings of armour, slightly different on each side, as if added at different times.
   const wing = (s, z0, z1, y, span) => {
     const x = s * (W / 2 + span / 2 - W * 0.02);
-    put(s < 0 ? 'steel' : 'black', octLoft([{ z: z0, w: span * 0.3, h: H * 0.06, x: x + s * span * 0.25, y }, { z: z0 + 0.08 * L, w: span, h: H * 0.13, x, y },
-      { z: z1 - 0.06 * L, w: span, h: H * 0.13, x, y }, { z: z1, w: span * 0.5, h: H * 0.08, x: x - s * span * 0.2, y }]));
+    const wr = [{ z: z0, w: span * 0.3, h: H * 0.06, x: x + s * span * 0.25, y }, { z: z0 + 0.08 * L, w: span, h: H * 0.13, x, y },
+      { z: z1 - 0.06 * L, w: span, h: H * 0.13, x, y }, { z: z1, w: span * 0.5, h: H * 0.08, x: x - s * span * 0.2, y }];
+    put(s < 0 ? 'steel' : 'black', octLoft(wr)); loftShape(wr);
     put('green', at(boxG(span * 0.9, H * 0.02, 0.01 * L), x, y + H * 0.066, z0 + 0.1 * L));
-    solid(x - span / 2, y - H * 0.07, z0, x + span / 2, y + H * 0.07, z1);
+    solidF(x - span / 2, y - H * 0.07, z0, x + span / 2, y + H * 0.07, z1);
     return x + s * span / 2;
   };
   const nb = boxes.length;
@@ -292,8 +312,10 @@ function buildMothership(key) {
   const wingBoxes = boxes.slice(nb);
 
   // ----- The engine array: a block across the stern with many big engines in a grid. -----
-  put('black', octLoft([{ z: zt - 0.01 * L, w: W * 0.98, h: H * 1.8, y: H * 0.15 }, { z: L / 2, w: W * 0.9, h: H * 1.65, y: H * 0.15 }]));
-  solid(-W * 0.49, -H * 0.75, zt - 0.01 * L, W * 0.49, H * 1.05, L / 2 + eLen);
+  const eng = [{ z: zt - 0.01 * L, w: W * 0.98, h: H * 1.8, y: H * 0.15 }, { z: L / 2, w: W * 0.9, h: H * 1.65, y: H * 0.15 }];
+  put('black', octLoft(eng)); loftShape(eng);
+  solidF(-W * 0.49, -H * 0.75, zt - 0.01 * L, W * 0.49, H * 1.05, L / 2 + eLen);
+  shapeBox([-W * 0.43, H * 0.15 - H * 0.74, L / 2, W * 0.43, H * 0.15 + H * 0.74, L / 2 + eLen]);   // the engine bells
   const [rows, cols] = t.engines, sx = W * 0.84 / cols, sy = H * 1.45 / rows, re = Math.min(sx, sy) * 0.43, engines = [];
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const x = (c - (cols - 1) / 2) * sx, y = H * 0.15 + (r - (rows - 1) / 2) * sy, big = re * (r === 0 && rows > 2 ? 0.8 : 1);
@@ -375,15 +397,18 @@ function buildMothership(key) {
   // left flank, right flank (turned round), upper decks, under the keel, and a flight deck at the rear facing aft.
   // A bay is only built if its open mouth and its launch lane are clear of everything solid, and its block doesn't cut
   // into another bay or the wings, so no fighter ever flies through the hull.
-  const BH = 7, BD = 12, BF = BD + 3;       // bay height, depth, and how far its block stands out from the hull
-  const keepOut = [], bays = D.bays, YAX = new THREE.Vector3(0, 1, 0), ONE3 = new THREE.Vector3(1, 1, 1);
+  // Bays grow with the ship (settings.js): each is built at fighter scale in its own frame and placed with a scale BS, so a
+  // big ship's bays are big enough to fly the player's ship into. Fighters and people keep their own size.
+  const BH = 7, BD = 12, BF = BD + 3;       // bay height, depth, and how far its block stands out from the hull (in the bay's frame)
+  const BS = MS.bayScale[key] || 1; D.BS = BS;
+  const keepOut = [], bays = D.bays, YAX = new THREE.Vector3(0, 1, 0), ONE3 = new THREE.Vector3(1, 1, 1), BS3 = new THREE.Vector3(BS, BS, BS);
   const tb = (M, b) => { const a = new THREE.Vector3(b[0], b[1], b[2]).applyMatrix4(M), c = new THREE.Vector3(b[3], b[4], b[5]).applyMatrix4(M); return [Math.min(a.x, c.x), Math.min(a.y, c.y), Math.min(a.z, c.z), Math.max(a.x, c.x), Math.max(a.y, c.y), Math.max(a.z, c.z)]; };
   const overlap = (a, b, pad = 0) => a[0] < b[3] + pad && a[3] > b[0] - pad && a[1] < b[4] + pad && a[4] > b[1] - pad && a[2] < b[5] + pad && a[5] > b[2] - pad;
   const chevrons = (p, len, h, x, y, zc, ry) => { const n = Math.max(1, Math.round(len / (h * 8))), w = len / n; for (let i = 0; i < n; i++) p('decal', at(decalG(w, h, DECAL.chevron), x, y, zc - len / 2 + w * (i + 0.5), 0, ry)); };
   const beacons = [];
   function tryBay({ origin, theta, slots: n, main = false, kind }) {
     const HL = main ? 1 + n * SP + PAD + ASM + 1 : 2 + n * SP, zs = -HL / 2, ze = HL / 2;
-    const Q = new THREE.Quaternion().setFromAxisAngle(YAX, theta), M = new THREE.Matrix4().compose(origin, Q, ONE3);
+    const Q = new THREE.Quaternion().setFromAxisAngle(YAX, theta), M = new THREE.Matrix4().compose(origin, Q, BS3);
     const cav = tb(M, [0, 0, zs, BD, BH, ze]), lane = tb(M, [-48, -0.5, zs - 0.5, 0, 4.5, ze + 0.5]);
     const blocks = [[0, -3, zs - 4, BF + 2, 0, ze + 4], [0, BH, zs - 4, BF + 2, BH + 2.5, ze + 4], [0, 0, zs - 4, BF + 2, BH, zs], [0, 0, ze, BF + 2, BH, ze + 4], [BD, 0, zs, BF + 2, BH, ze]];
     const blocksS = blocks.map(b => tb(M, b));
@@ -391,14 +416,14 @@ function buildMothership(key) {
     if (keepOut.some(b => blocksS.some(k => overlap(b, k)))) return null;
     if (wingBoxes.some(w => blocksS.some(k => overlap(w, k, 0.5)))) return null;
     keepOut.push(cav, lane);
-    const bay = { index: bays.length, kind, main, M, Q, theta, slots: n, HL, zs, ze, BD, BH, first: D.slots,
+    const bay = { index: bays.length, kind, main, M, Minv: M.clone().invert(), Q, theta, slots: n, HL, zs, ze, BD, BH, first: D.slots,
       slotX: BD * 0.5 + 0.3, slotZ: i => zs + 1 + (i + 0.5) * SP, padZ: zs + 1 + n * SP + PAD / 2, zp: ze - 1 - ASM, zA: ze - 1 - ASM / 2 };
     bay.center = new THREE.Vector3(BD / 2, BH / 2, 0).applyMatrix4(M);
     bay.crewDoor = main ? new THREE.Vector3(BD - 0.6, 0, bay.padZ + 1.6) : new THREE.Vector3(BD - 0.6, 0, ze - 1.2);
     for (let i = 0; i < n; i++) D.slotRefs.push({ bay, i });
     D.slots += n; bays.push(bay);
     // The block around the bay (seen from far, so it's part of the main hull mesh) and its solid volumes.
-    blocks.forEach((b, j) => { put(j < 2 ? 'plain' : 'dark', at(boxG(b[3] - b[0], b[4] - b[1], b[5] - b[2]), (b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2).applyMatrix4(M)); boxes.push(blocksS[j]); });
+    blocks.forEach((b, j) => { put(j < 2 ? 'plain' : 'dark', at(boxG(b[3] - b[0], b[4] - b[1], b[5] - b[2]), (b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2).applyMatrix4(M)); boxes.push(blocksS[j]); shapeBox(blocksS[j]); });
     put('bayGlow', at(new THREE.PlaneGeometry(HL, BH * 0.9), BD - 0.02, BH / 2, 0, 0, -Math.PI / 2).applyMatrix4(M));   // a lit opening from far (behind the inside's back wall, so it's hidden up close)
     put('green', at(boxG(0.4, 0.35, HL + 8), 0.2, -0.15, 0).applyMatrix4(M)); put('green', at(boxG(0.4, 0.35, HL + 8), 0.2, BH + 0.15, 0).applyMatrix4(M));
     // Guide beacons on booms at both ends of the mouth: the moving lights you see from far away.
@@ -445,14 +470,15 @@ function buildMothership(key) {
     return bay;
   }
   // Where bays may go: rails along the hull, each a side, a height and a stretch of hull.
-  const flankY = Math.min(-0.36 * H, H * 0.11 - 1 - 2.5 - BH);   // low enough that a bay's block stays under the wings
+  const BHw = BH * BS, BFw = BF * BS;      // the same, in ship space
+  const flankY = Math.min(-0.36 * H, H * 0.11 - 1 - 2.5 * BS - BHw);   // low enough that a bay's block stays under the wings
   const RAILS = {
-    portFlank: { x: -(W / 2 + BF), y: flankY, z0: zn + 4, z1: zt - 4, theta: 0 },
-    stbdFlank: { x: W / 2 + BF, y: flankY, z0: zn + 4, z1: zt - 4, theta: Math.PI },
-    portUpper: { x: -(0.37 * W + BF), y: 0.55 * H, z0: -0.12 * L, z1: 0.42 * L, theta: 0 },
-    stbdUpper: { x: 0.37 * W + BF, y: 0.55 * H, z0: -0.12 * L, z1: 0.42 * L, theta: Math.PI },
-    portUnder: { x: -(0.25 * W + BF), y: -0.8 * H, z0: -0.27 * L, z1: 0.36 * L, theta: 0 },
-    stbdUnder: { x: 0.25 * W + BF, y: -0.8 * H, z0: -0.27 * L, z1: 0.36 * L, theta: Math.PI },
+    portFlank: { x: -(W / 2 + BFw), y: flankY, z0: zn + 4, z1: zt - 4, theta: 0 },
+    stbdFlank: { x: W / 2 + BFw, y: flankY, z0: zn + 4, z1: zt - 4, theta: Math.PI },
+    portUpper: { x: -(0.37 * W + BFw), y: 0.55 * H, z0: -0.12 * L, z1: 0.42 * L, theta: 0 },
+    stbdUpper: { x: 0.37 * W + BFw, y: 0.55 * H, z0: -0.12 * L, z1: 0.42 * L, theta: Math.PI },
+    portUnder: { x: -(0.25 * W + BFw), y: -0.8 * H, z0: -0.27 * L, z1: 0.36 * L, theta: 0 },
+    stbdUnder: { x: 0.25 * W + BFw, y: -0.8 * H, z0: -0.27 * L, z1: 0.36 * L, theta: Math.PI },
   };
   const BAY_PLAN = {
     frigate: [['portFlank', [3], true], ['stbdFlank', [3]]],
@@ -463,9 +489,9 @@ function buildMothership(key) {
   const target = { frigate: 2, cruiser: 8, carrier: 30 }[key];
   for (const [rail, sizes, hasMain] of BAY_PLAN) {
     if (bays.length >= target) break;
-    if (rail === 'rear') { tryBay({ origin: new THREE.Vector3(0, H * 1.05 + 1.2, L / 2), theta: Math.PI / 2, slots: sizes[0], kind: 'rear' }); continue; }   // on top of the engine block, its lane clear above the engines
+    if (rail === 'rear') { tryBay({ origin: new THREE.Vector3(0, H * 1.05 + 1.2 * BS, L / 2), theta: Math.PI / 2, slots: sizes[0], kind: 'rear' }); continue; }   // on top of the engine block, its lane clear above the engines
     // Spread this rail's bays evenly along its stretch of hull.
-    const R0 = RAILS[rail], lens = sizes.map((n, i) => (hasMain && i === 0 ? 1 + n * SP + PAD + ASM + 1 : 2 + n * SP) + 9);
+    const R0 = RAILS[rail], lens = sizes.map((n, i) => ((hasMain && i === 0 ? 1 + n * SP + PAD + ASM + 1 : 2 + n * SP) + 9) * BS);
     const free = (R0.z1 - R0.z0) - lens.reduce((a, b) => a + b, 0), gap = free / (sizes.length + 1);
     let z = R0.z0 + Math.max(0, gap);
     sizes.forEach((n, i) => {
@@ -484,7 +510,7 @@ function buildMothership(key) {
   const mainBay = bays.find(b => b.main) || bays[0];
   if (!mainBay) throw new Error('No room for a hangar bay on the ' + key);
   // The main bay's lookout: a small tower on its block, with lit windows and a radar bar.
-  const ctP = new THREE.Vector3(3, BH + 2.5, mainBay.zs - 1).applyMatrix4(mainBay.M), ct = { x: ctP.x, y: ctP.y, z: ctP.z, s: 4 };
+  const ctP = new THREE.Vector3(3, BH + 2.5, mainBay.zs - 1).applyMatrix4(mainBay.M), ct = { x: ctP.x, y: ctP.y, z: ctP.z, s: 4 * BS };
   put('black', at(boxG(ct.s, ct.s * 1.1, ct.s), ct.x, ct.y + ct.s * 0.55, ct.z));
   put('steel', at(boxG(ct.s * 1.3, ct.s * 0.5, ct.s * 1.3), ct.x, ct.y + ct.s * 1.35, ct.z));
   solid(ct.x - ct.s * 0.65, ct.y, ct.z - ct.s * 0.65, ct.x + ct.s * 0.65, ct.y + ct.s * 1.8, ct.z + ct.s * 0.65);
@@ -512,7 +538,7 @@ function buildMothership(key) {
 
   // ----- Guns: heavy twin-barrel turrets, point-defence turrets and missile batteries, all over the hull. -----
   // Mounts are picked on the decks' surfaces (upside down underneath), away from bays, lanes and each other.
-  const TS = clamp(L / 150, 0.5, 4.5), turretList = [];
+  const TS = clamp(L / 150, 0.5, 40), turretList = [];   // guns grow with the ship
   const surfaces = [
     { y: H * 1.29, up: 1, x: [topX - W * 0.2, topX + W * 0.2], z: [0.03 * L, 0.36 * L], w: 3 },
     { y: H * 0.97, up: 1, x: [-W * 0.35, W * 0.35], z: [-0.13 * L, 0.42 * L], w: 5 },
@@ -554,10 +580,10 @@ function buildMothership(key) {
   const forest = (cx, cy, cz, rx, rz, n) => { for (let i = 0; i < n; i++) { const x = cx + (rnd() - 0.5) * rx, z = cz + (rnd() - 0.5) * rz; if (nearGun(x, cy, z, 1)) continue; ant.push([x, cy, z, L * (0.0005 + rnd() * 0.0008), H * (0.06 + Math.pow(rnd(), 2) * 0.35)]); } };
   const perForest = Math.ceil(t.antennas / 5);
   forest(topX, H * 1.29, 0.31 * L, W * 0.3, 0.05 * L, perForest);
-  forest(-W * 0.22, H * 0.97, -0.17 * L, W * 0.2, 0.05 * L, perForest);
+  forest(-W * 0.22, H * 0.97, -0.1 * L, W * 0.2, 0.05 * L, perForest);          // where the upper deck is at full height
   forest(W * 0.25, H * 0.97, 0.1 * L, W * 0.16, 0.08 * L, perForest);
   forest(tipR - W * 0.15, H * 0.25, 0.2 * L, W * 0.2, 0.08 * L, perForest);
-  forest(0, H * 0.5, -0.33 * L, W * 0.3, 0.04 * L, perForest);
+  forest(0, H * 0.41, -0.32 * L, W * 0.25, 0.03 * L, perForest);              // on the prow's sloping top (not above it)
   const antennas = new THREE.InstancedMesh(cylG(0.5, 1, 1, 5).translate(0, 0.5, 0), mats.dark, ant.length);
   const m4b = new THREE.Matrix4();
   ant.forEach(([x, y, z, r, h], i) => antennas.setMatrixAt(i, m4b.compose(new THREE.Vector3(x, y, z), new THREE.Quaternion(), new THREE.Vector3(r, h, r))));
@@ -591,10 +617,11 @@ function buildMothership(key) {
       const district = 0.5 + 0.5 * Math.sin(z / (0.05 * L) + x / (0.05 * W)), h = H * (0.025 + Math.pow(rnd(), 2.2) * 0.13 * (0.4 + district));
       const fw = cs * (0.6 + rnd() * 0.3), fd = cs * (0.6 + rnd() * 0.3);
       (rnd() < 0.55 ? city.black : city.steel).push([x, y0, z, fw, h, fd]);
+      shapeBox([x - fw / 2, y0 - 1, z - fd / 2, x + fw / 2, y0 + h, z + fd / 2], true);
       if (rnd() < 0.12) roofLights.push({ p: [x, y0 + h + 0.5, z], c: rnd() < 0.5 ? '#FFD39A' : '#FF8A7A' });
       placed++;
     }
-    for (const [cx, z0, z1, hw, y0] of areas) solid(cx - hw, y0, z0, cx + hw, y0 + H * 0.22, z1);
+    for (const [cx, z0, z1, hw, y0] of areas) solidF(cx - hw, y0, z0, cx + hw, y0 + H * 0.22, z1);   // fighters keep above the whole district
     D.cityCount = placed;
   }
   const cityGeo = boxG(1, 1, 1).translate(0, 0.5, 0);
@@ -634,9 +661,9 @@ function buildMothership(key) {
     bay.arms = new THREE.InstancedMesh(armGeo, armMat, bay.slots); bay.hoses = new THREE.InstancedMesh(hoseGeo, hoseMat, bay.slots);
     bay.arms.frustumCulled = bay.hoses.frustumCulled = false; bay.group.add(bay.arms, bay.hoses);
     const land = []; for (let i = 0; i < bay.slots; i++) for (let j = 0; j < 4; j++) land.push({ p: [0.3 + j * 0.9, 0.08, bay.slotZ(i)], c: '#FFE6A8' });
-    bay.land = dots(land, tx.glow, 0.7, 1);
+    bay.land = dots(land, tx.glow, 0.7 * BS, 1);
     const lip = []; for (let z = bay.zs + 1; z < bay.ze - 0.5; z += 1.6) lip.push({ p: [0.05, 0.12, z], c: '#7FCBFF' }, { p: [0.05, BH - 0.1, z], c: '#7FCBFF' });
-    const lipD = dots(lip, tx.glow, 0.55, 0.9);
+    const lipD = dots(lip, tx.glow, 0.55 * BS, 0.9);
     bay.group.add(bay.land, lipD); bayLightMats.push(bay.land.material, lipD.material);
     if (bay.main) { bay.door = new THREE.Mesh(at(boxG(bay.DW, bay.DH, 0.15), 0, bay.DH / 2, 0), mats.steel); bay.door.position.set(bay.slotX, 0, bay.zp - 0.05); bay.group.add(bay.door); }
   }
@@ -667,7 +694,7 @@ function buildMothership(key) {
   farLights.frustumCulled = false;
   const engineGlow = dots(engines, tx.glow, re * 4.5, 0.75);
   // Guide beacons blink in turn along each bay mouth, so from far away the bays read as lit openings with moving lights.
-  const beaconLights = dots(beacons, tx.glow, 2.6, 1);
+  const beaconLights = dots(beacons, tx.glow, 2.6 * BS, 1);
   core.add(runLights, roof, farLights, engineGlow, pulse, beaconLights);
 
   // ----- Turret meshes: each kind is a base, a head that turns, and guns that tilt, all instanced. -----
@@ -712,7 +739,11 @@ function buildMothership(key) {
     pm.compose(tv.set(...tt.K.pivot), tq.setFromAxisAngle(XAX, tt.pitch), ONE3); gm.multiplyMatrices(hm, pm); M3.gun.setMatrixAt(tt.i, gm);
     tt.gm = (tt.gm || new THREE.Matrix4()).copy(gm);
   }
-  for (const tt of turretList) { turretMeshes[tt.kind].base.setMatrixAt(tt.i, hm.compose(tt.pos, tt.mq, ONE3)); writeTurret(tt); }
+  for (const tt of turretList) {
+    turretMeshes[tt.kind].base.setMatrixAt(tt.i, hm.compose(tt.pos, tt.mq, ONE3)); writeTurret(tt);
+    const y0 = tt.pos.y, y1 = tt.pos.y + tt.up * tt.K.top * 0.75;   // the base and head (the barrels swing, so they're left out)
+    shapeBox([tt.pos.x - tt.rad, Math.min(y0, y1), tt.pos.z - tt.rad, tt.pos.x + tt.rad, Math.max(y0, y1), tt.pos.z + tt.rad]);
+  }
   // Where a turret wants to point to aim at p (ship space): yaw and pitch in its own mount frame, and whether that's above its horizon.
   const av = new THREE.Vector3(), aq = new THREE.Quaternion();
   function aimAt(tt, p) {
@@ -768,6 +799,58 @@ function buildMothership(key) {
   D.bridge = new THREE.Vector3(bx, by + bh / 2, bz);
   D.mainBay = mainBay;
 
+  // ----- A grid over the collision shapes, so a point only tests the few shapes near it. -----
+  // Each shape is listed in every cell its box (grown by QPAD) touches, so any shape closer than QPAD to a point is found.
+  const QPAD = WORLD.collision.radius + 3, gmin = new THREE.Vector3(Infinity, Infinity, Infinity), gmax = gmin.clone().negate();
+  const aabb = sh => sh.k === 0 ? sh.b : [Math.min(sh.a[0] - sh.a[2], sh.b[0] - sh.b[2]), Math.min(sh.a[1] - sh.a[3], sh.b[1] - sh.b[3]), sh.z0,
+    Math.max(sh.a[0] + sh.a[2], sh.b[0] + sh.b[2]), Math.max(sh.a[1] + sh.a[3], sh.b[1] + sh.b[3]), sh.z1];
+  for (const sh of shapes) { sh.box = aabb(sh); gmin.min(new THREE.Vector3(sh.box[0], sh.box[1], sh.box[2])); gmax.max(new THREE.Vector3(sh.box[3], sh.box[4], sh.box[5])); }
+  gmin.subScalar(QPAD); gmax.addScalar(QPAD);
+  const CS = Math.max(10, L / 48), GN = [0, 1, 2].map(i => Math.max(1, Math.ceil((gmax.getComponent(i) - gmin.getComponent(i)) / CS)));
+  const cells = new Map();
+  for (const [si, sh] of shapes.entries()) {
+    const lo = [0, 1, 2].map(i => clamp(Math.floor((sh.box[i] - QPAD - gmin.getComponent(i)) / CS), 0, GN[i] - 1));
+    const hi = [0, 1, 2].map(i => clamp(Math.floor((sh.box[i + 3] + QPAD - gmin.getComponent(i)) / CS), 0, GN[i] - 1));
+    for (let a = lo[0]; a <= hi[0]; a++) for (let b = lo[1]; b <= hi[1]; b++) for (let c = lo[2]; c <= hi[2]; c++) {
+      const k = (a * GN[1] + b) * GN[2] + c; let list = cells.get(k); if (!list) cells.set(k, list = []); list.push(si);
+    }
+  }
+  const NONE = [];
+  const cellAt = (x, y, z) => {
+    const a = Math.floor((x - gmin.x) / CS), b = Math.floor((y - gmin.y) / CS), c = Math.floor((z - gmin.z) / CS);
+    if (a < 0 || b < 0 || c < 0 || a >= GN[0] || b >= GN[1] || c >= GN[2]) return NONE;
+    return cells.get((a * GN[1] + b) * GN[2] + c) || NONE;
+  };
+  // Signed distance from a point (ship space) to one shape: negative inside.
+  function sdShape(sh, x, y, z) {
+    if (sh.k === 0) {
+      const b = sh.b, qx = Math.abs(x - (b[0] + b[3]) / 2) - (b[3] - b[0]) / 2, qy = Math.abs(y - (b[1] + b[4]) / 2) - (b[4] - b[1]) / 2, qz = Math.abs(z - (b[2] + b[5]) / 2) - (b[5] - b[2]) / 2;
+      return Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qy, qz), 0);
+    }
+    const t = clamp((z - sh.z0) / (sh.z1 - sh.z0), 0, 1), A = sh.a, B = sh.b;
+    const cx = A[0] + (B[0] - A[0]) * t, cy = A[1] + (B[1] - A[1]) * t, hw = A[2] + (B[2] - A[2]) * t, hh = A[3] + (B[3] - A[3]) * t, c = A[4] + (B[4] - A[4]) * t;
+    const px = Math.abs(x - cx), py = Math.abs(y - cy);
+    const d2 = Math.max(px - hw, py - hh, (px + py - (hw + hh - c)) * 0.7071), dz = Math.max(sh.z0 - z, z - sh.z1);
+    return d2 <= 0 && dz <= 0 ? Math.max(d2, dz) : Math.hypot(Math.max(d2, 0), Math.max(dz, 0));
+  }
+  // Distance to the hull near a point (only exact within QPAD; Infinity if nothing is that close). n gets the way out.
+  function sdNear(p, n) {
+    const list = cellAt(p.x, p.y, p.z); if (!list.length) return Infinity;
+    const f = (x, y, z) => { let d = Infinity; for (const i of list) { const v = sdShape(shapes[i], x, y, z); if (v < d) d = v; } return d; };
+    const d = f(p.x, p.y, p.z);
+    if (n && d < QPAD) { const e = 0.25; n.set(f(p.x + e, p.y, p.z) - f(p.x - e, p.y, p.z), f(p.x, p.y + e, p.z) - f(p.x, p.y - e, p.z), f(p.x, p.y, p.z + e) - f(p.x, p.y, p.z - e)); if (n.lengthSq() < 1e-12) n.set(0, 1, 0); n.normalize(); }
+    return d;
+  }
+  // Distance to the nearest hull surface from anywhere (for the radio warnings): every big section, and the buildings
+  // and small parts once close.
+  function sdFar(p, closeAt) {
+    let d = Infinity;
+    for (const sh of shapes) if (!sh.city) { const v = sdShape(sh, p.x, p.y, p.z); if (v < d) d = v; }
+    if (d < closeAt) for (const sh of shapes) if (sh.city) { const v = sdShape(sh, p.x, p.y, p.z); if (v < d) d = v; }
+    return d;
+  }
+  D.shapes = shapes; D.sdNear = sdNear; D.sdFar = sdFar; D.QPAD = QPAD;
+
   // Per-frame animation of this ship's moving parts, and the level of detail.
   let doorOpen = 0;
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3();
@@ -790,7 +873,7 @@ function buildMothership(key) {
     for (const s2 of service) { s2.arm += clamp(s2.want - s2.arm, -dt * 0.8, dt * 0.8); s2.hose += clamp((s2.want && s2.arm > 0.9 ? 1 : 0) - s2.hose, -dt * 1.2, dt * 0.7); }
     doorOpen += clamp(doorWant - doorOpen, -dt * 0.9, dt * 0.9);
     for (const bay of bays) {
-      bay.group.visible = camLocal.distanceTo(bay.center) < 260;
+      bay.group.visible = camLocal.distanceTo(bay.center) < 260 * BS;
       if (!bay.group.visible) continue;
       if (bay.door) { bay.door.position.y = doorOpen * (bay.DH - 0.2); bay.door.scale.y = 1 - doorOpen * 0.85; }
       const col = bay.land.geometry.attributes.color;
@@ -881,16 +964,15 @@ export function makeFleet(opts) {
   const reserveIds = [];     // ids waiting in the reserve hangar
   const mk = id => ({ id, state: 'docked', slot: -1, lp: new THREE.Vector3(), lq: new THREE.Quaternion(), pos: new THREE.Vector3(), vel: new THREE.Vector3(), q: new THREE.Quaternion(),
     fuel: 1, t: 0, dur: 1, pilot: true, speed: 16 + hashN(id * 7 + 1) * 12, endurance: 70 + hashN(id * 3 + 5) * 80, target: null, lead: null, pairT: 0, roll: 0, retire: false,
-    from: new THREE.Vector3(), c1: new THREE.Vector3(), c2: new THREE.Vector3(), steer: new THREE.Vector3(), tick: Math.floor(hashN(id) * 4), walker: null, thrust: 0 });
+    from: new THREE.Vector3(), c1: new THREE.Vector3(), c2: new THREE.Vector3(), steer: new THREE.Vector3(), tick: Math.floor(hashN(id) * 4), walker: null, thrust: 0, escort: 0 });
 
   // Coarse grid over the patrol region; each cell remembers when someone last went there.
   const GX = 6, GY = 3, GZ = 6, cells = new Float32Array(GX * GY * GZ).fill(-1e9);
-  // The patrol region spans the planets' space and the space around the mothership, which waits far outside it.
+  // The patrol region is the space around the mothership (the planets are far too far apart to patrol between them).
   const rMin = new THREE.Vector3(), rMax = new THREE.Vector3();
   function region() {
-    const R0 = opts.volume() * 1.25, Rs = ms ? ms.D.L * 0.75 : 0, c = station.pos;
-    rMin.set(Math.min(-R0, c.x - Rs), Math.min(-R0 * 0.5, c.y - Rs * 0.5), Math.min(-R0, c.z - Rs));
-    rMax.set(Math.max(R0, c.x + Rs), Math.max(R0 * 0.5, c.y + Rs * 0.5), Math.max(R0, c.z + Rs));
+    const Rs = (ms ? ms.D.L : 400) * MS.patrolReach + 2000, c = station.pos;
+    rMin.set(c.x - Rs, c.y - Rs * 0.5, c.z - Rs); rMax.set(c.x + Rs, c.y + Rs * 0.5, c.z + Rs);
   }
   const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), tmpQ = new THREE.Quaternion(), m4 = new THREE.Matrix4(), UPV = new THREE.Vector3(0, 1, 0), ONE = new THREE.Vector3(1, 1, 1);
   const msQ = new THREE.Quaternion(), msQi = new THREE.Quaternion();
@@ -1063,7 +1145,7 @@ export function makeFleet(opts) {
     ms = key ? built(key) : null;
     if (old && old !== ms) { fading = old; fading.t = 1; }
     if (ms) {
-      spdK = (1 + ms.D.L / 800) * Math.sqrt(Math.max(1, opts.volume() / 300));   // a bigger world needs faster patrols
+      spdK = 1 + ms.D.L / 800;   // fighters fly faster around bigger ships
       if (station.set && !first) {
         const before = station.pos.clone(), r = shellR();
         if (Math.abs(before.length() - r) > r * 0.1) {
@@ -1093,18 +1175,22 @@ export function makeFleet(opts) {
   // The player's ship never goes further out than 1.5x the planets' space, so a station whose whole hull stays outside
   // that can never overlap a planet or trap the player.
   const hullR = () => TIERS[tierKey || 'frigate'].L * 0.56;
-  const shellR = () => opts.volume() * 1.5 + 150 + hullR();
+  const shellR = () => opts.volume() * 1.5 + MS.shellGap + hullR();
   function pickStation(from, relax = 1) {
     const vol = opts.volume(), planets = opts.planets(), R = hullR(), r0 = shellR(), keepOut = vol * 1.5 + R + 40;
     let best = null, bestScore = -Infinity;
+    const Lh = TIERS[tierKey || 'frigate'].L;
     for (let tries = 0; tries < 160; tries++) {
       const a = Math.random() * Math.PI * 2, y = (Math.random() - 0.5) * 0.6, d = r0 * (1 + Math.random() * 0.15);
       const p = new THREE.Vector3(Math.cos(a), y, Math.sin(a)).normalize().multiplyScalar(d);
+      // A relocation is a hop of a few hull lengths along the parking shell.
+      if (from) { tmp.set(Math.random() - 0.5, (Math.random() - 0.5) * 0.3, Math.random() - 0.5); tmp.addScaledVector(from, -tmp.dot(from) / from.lengthSq()).normalize();
+        p.copy(from).addScaledVector(tmp, Lh * (MS.hopMin + Math.random() * (MS.hopMax - MS.hopMin))).setLength(d); }
       if (p.distanceTo(opts.shipPos) < R + 200) continue;
       if (planets.some(pl => p.distanceTo(pl.group.position) < opts.clearance(pl) + R + 60)) continue;
       let score = Math.random() * 20;
       if (from) {
-        const len = p.distanceTo(from); if (len < r0 * 0.3) continue;
+        const len = p.distanceTo(from); if (len < Lh * MS.hopMin * 0.8) continue;
         if (segDist(from, p, tmp.set(0, 0, 0)) < keepOut * Math.min(1, relax + 0.3)) continue;
         if (planets.some(pl => segDist(from, p, pl.group.position) < opts.clearance(pl) + R + 15)) continue;
         if (segDist(from, p, opts.shipPos) < R + 60) continue;
@@ -1122,13 +1208,13 @@ export function makeFleet(opts) {
   }
   function segDist(a, b, c) { const ab = tmp2.copy(b).sub(a), t = clamp(tmp.copy(c).sub(a).dot(ab) / Math.max(ab.lengthSq(), 1e-6), 0, 1); return tmp.copy(a).addScaledVector(ab, t).distanceTo(c); }
 
-  let reduced = false, spdK = 1, calmNow = false;
+  let reduced = false, spdK = 1, calmNow = false, player = null;
   function moveStation(dt) {
     station.drift += dt;
     const mv = station.move;
     if (mv) {
       // Very slow speed-up and slow-down, and a gentle turn toward where it's going. It waits if the player is in the way.
-      const VMAX = Math.max(6, (ms?.D.L || 0) / 250), A = VMAX / 60, left = mv.len - mv.s;
+      const VMAX = Math.max(6, (ms?.D.L || 0) / 150), A = VMAX / 60, left = mv.len - mv.s;
       const blocked = tmp.copy(opts.shipPos).sub(station.pos), ahead = blocked.dot(mv.dir) > 0 && blocked.length() < hullR() + 70;
       const want = ahead ? 0 : Math.min(VMAX, Math.sqrt(2 * A * Math.max(0, left)) + 0.05);
       mv.v += clamp(want - mv.v, -A * 2 * dt, A * dt);
@@ -1182,7 +1268,7 @@ export function makeFleet(opts) {
     prevFwd.copy(f.vel).normalize();
     tmp.copy(f.steer).sub(f.vel); const A = 11 * spdK * dt; if (tmp.length() > A) tmp.setLength(A);
     f.vel.add(tmp);
-    const sp = f.vel.length(); if (sp < 6) f.vel.setLength(6); if (sp > f.speed * spdK * 1.4) f.vel.setLength(f.speed * spdK * 1.4);
+    const sp = f.vel.length(); if (sp < 6 && !f.escort) f.vel.setLength(6); if (sp > f.speed * spdK * 1.5) f.vel.setLength(f.speed * spdK * 1.5);
     f.pos.addScaledVector(f.vel, dt);
     hardClear(f);
     // Never closer than a few lengths to another fighter (wingmen fly a little closer, but never touch).
@@ -1194,6 +1280,7 @@ export function makeFleet(opts) {
     }
     if (ms) pushOut(f.pos, 2);
     fwd.copy(f.vel).normalize();
+    if (f.escort && player && f.vel.length() < 4) { fwd.set(0, 0, -1).applyQuaternion(player.q); prevFwd.copy(fwd); }   // hovering alongside: face the way the player faces
     const turn = prevFwd.cross(fwd).y / Math.max(dt, 1e-4);
     f.roll += (clamp(turn * 1.2, -0.9, 0.9) - f.roll) * (1 - Math.exp(-dt * 3));
     lookM.lookAt(f.pos, tmp.copy(f.pos).add(fwd), UPV); f.q.setFromRotationMatrix(lookM).multiply(rollQ.setFromAxisAngle(Z, f.roll));
@@ -1215,8 +1302,15 @@ export function makeFleet(opts) {
           if ((f.fuel < 0.18 || f.retire) && !f.lead) { f.state = 'return'; f.slot = freeSlot(toLocal(f.pos, tmpL)); if (f.slot < 0) { f.state = 'hold'; f.t = 0; } for (const g of fighters) if (g.lead === f) g.lead = null; }
         }
         let target, speed = f.speed * spdK;
-        if (f.threat && (!f.threat.alive || f.state !== 'patrol' || calmNow)) f.threat = null;
-        if (f.state === 'patrol' && f.threat) {
+        if (f.threat && (!f.threat.alive || f.state !== 'patrol' || calmNow || f.escort)) f.threat = null;
+        if (f.escort && (f.state !== 'patrol' || !player)) f.escort = 0;
+        if (f.state === 'patrol' && f.escort) {
+          // Keeping the player company: beside the ship at a polite distance, matching its pace, weapons stowed.
+          const D3 = WORLD.warnings.shadowDistance * SHIP_LEN;
+          target = cv1.set(f.escort * D3, D3 * 0.25, D3 * 0.35).applyQuaternion(player.q).add(player.pos).clone();
+          const dist = f.pos.distanceTo(target);
+          speed = clamp(dist * 0.8 + player.speed, 0, f.speed * spdK * 1.5);
+        } else if (f.state === 'patrol' && f.threat) {
           // Engaging: hold a stand-off point near the target (on the side away from the player), and fire when lined up and safe.
           const th = f.threat; cv1.copy(f.pos).sub(th.pos); if (cv1.lengthSq() < 1) cv1.set(0, 1, 0);
           cv1.applyAxisAngle(UPV, (f.id % 6) * 1.05).y += ((f.id % 3) - 1) * 0.4;   // each fighter its own side, so two never share a spot
@@ -1514,10 +1608,17 @@ export function makeFleet(opts) {
   // ----- Every frame -----
   const camLocal = new THREE.Vector3();
   // calm: calm space or reduced motion. The guns hold still and fire nothing, there are no drills, fighters launch slowly.
-  function update(dt, { camera, reduced: red = false, calm = false }) {
+  function update(dt, { camera, reduced: red = false, calm = false, player: pl = null, escort = false }) {
     calmNow = calm || red;
     reduced = red;
+    player = pl;
     time += dt;
+    // Two fighters keep the player company while they linger right by the hull (space.js decides when), then leave.
+    const esc = fighters.filter(f => f.escort), wantEscort = escort && !red && !!pl;
+    if (wantEscort && esc.length < 2) {
+      const cands = fighters.filter(f => f.state === 'patrol' && !f.escort && !f.threat && f.fuel > 0.3).sort((a, b) => a.pos.distanceTo(pl.pos) - b.pos.distanceTo(pl.pos));
+      for (const sd of [1, -1]) if (!esc.some(f => f.escort === sd)) { const f = cands.shift(); if (!f) break; f.escort = sd; f.lead = null; for (const g of fighters) if (g.lead === f) g.lead = null; }
+    } else if (!wantEscort) for (const f of esc) { f.escort = 0; f.target = pickPatrol(f); }
     const fdt = reduced ? dt * 0.15 : dt;
     // Tier change: the old ship fades as the new one powers up.
     if (fading) { fading.t -= dt / 2.5; fading.root.scale.setScalar(0.94 + 0.06 * fading.t); fading.setFade(Math.max(0, fading.t)); if (fading.t <= 0) { fading.root.visible = false; fading.setFade(1); fading.root.scale.setScalar(1); fading.root.position.set(0, 0, 0); fading = null; } }
@@ -1527,7 +1628,7 @@ export function makeFleet(opts) {
     root.updateMatrixWorld();
     const camD = camera.position.distanceTo(root.position);
     toLocal(camera.position, camLocal);
-    const nearHangar = ms.D.bays.some(b => camLocal.distanceTo(b.center) < 300);
+    const nearHangar = ms.D.bays.some(b => camLocal.distanceTo(b.center) < 300 * ms.D.BS);
 
     // Keep the right number flying: promote reserves, start the next rollout.
     const want = Math.min(MAX_ACTIVE, fund.total);
@@ -1562,7 +1663,7 @@ export function makeFleet(opts) {
       if (ci >= crew.length) break;
       if (f.state === 'board' && f.slot >= 0) {
         // From the bay's crew door to the fighter's side, in that bay's frame.
-        const r = ref(f.slot), b = r.bay; if (camLocal.distanceTo(b.center) > 300) continue;
+        const r = ref(f.slot), b = r.bay; if (camLocal.distanceTo(b.center) > 300 * ms.D.BS) continue;
         const p = crew[ci++], u = smooth(clamp(f.t / 3, 0, 1)), door = L2S(b, b.crewDoor.x, 0, b.crewDoor.z, new THREE.Vector3()), to = L2S(b, b.slotX + 0.5, 0, b.slotZ(r.i) - 1.0, tmp);
         p.group.position.lerpVectors(door, to, u);
         p.group.rotation.y = Math.atan2(-(to.x - door.x), -(to.z - door.z)); p.pose('walk', time); p.group.visible = u < 0.98;
@@ -1622,10 +1723,68 @@ export function makeFleet(opts) {
   const tmpColor = new THREE.Color(), tmpQ2 = new THREE.Quaternion();
 
   // ----- For the rest of the world -----
+  // Cameras: kept just outside the hull's real shape (not the fighters' coarse boxes), so they can follow the ship anywhere
+  // it can fly, into bays and along the hull.
+  const kcN = new THREE.Vector3(), kcP = new THREE.Vector3();
   function keepClear(pos, pad) {
     if (!ms || !ms.root.visible) return;
-    // A few passes, since pushing out of one box can land in the next one.
-    pushOut(pos, pad);
+    toLocal(pos, kcP);
+    for (let i = 0; i < 4; i++) { const d = ms.D.sdNear(kcP, kcN); if (d >= pad) break; kcP.addScaledVector(kcN, pad - d + 0.01); }
+    toWorld(kcP, pos);
+  }
+  // The player's ship against the hull and parked fighters: a few spheres along the ship (world space in `centers`, radius r).
+  // Returns how far to move the ship to get clear (world), the way out, and where it touched; null if nothing touches.
+  // Several passes, so a ship wedged between two parts (or one the mothership has moved into) always ends up outside.
+  const cN = new THREE.Vector3(), cL = new THREE.Vector3(), cPush = new THREE.Vector3(), cOut = { push: new THREE.Vector3(), normal: new THREE.Vector3(), point: new THREE.Vector3(), depth: 0 };
+  function collideShip(centers, r) {
+    if (!ms || !ms.root.visible) return null;
+    cOut.push.set(0, 0, 0); cOut.depth = 0; let hit = false;
+    for (let pass = 0; pass < 4; pass++) {
+      let moved = false;
+      for (const c of centers) {
+        toLocal(cL.copy(c).add(cOut.push), cL);
+        const d = ms.D.sdNear(cL, cN);
+        if (d < r) {
+          cPush.copy(cN).applyQuaternion(msQ).multiplyScalar(r - d + 0.01); cOut.push.add(cPush); moved = hit = true;
+          if (r - d > cOut.depth) { cOut.depth = r - d; cOut.normal.copy(cN).applyQuaternion(msQ); cOut.point.copy(c).add(cOut.push).addScaledVector(cOut.normal, -r); }
+        }
+        // Fighters sitting in a bay can't move out of the way, so the ship bumps them gently too (flying ones steer clear).
+        for (const f of fighters) {
+          if (!isLocal(f)) continue;
+          cPush.copy(c).add(cOut.push).sub(f.pos); const l = cPush.length(), min = r + 2.4;
+          if (l < min && l > 1e-4) { cPush.multiplyScalar((min - l) / l); cOut.push.add(cPush); moved = hit = true;
+            if (min - l > cOut.depth) { cOut.depth = min - l; cOut.normal.copy(cPush).normalize(); cOut.point.copy(f.pos); } }
+        }
+      }
+      if (!moved) break;
+    }
+    return hit ? cOut : null;
+  }
+  // Distance from a point (world) to the nearest hull surface, and whether it's lined up in a hangar's approach lane.
+  const hdP = new THREE.Vector3();
+  function hullSurfaceDist(pos, closeAt = 300) {
+    if (!ms || !ms.root.visible) return Infinity;
+    toLocal(pos, hdP);
+    const rough = hdP.length() - ms.D.L * 0.75;
+    if (rough > closeAt * 4) return rough;
+    return ms.D.sdFar(hdP, closeAt);
+  }
+  const lnP = new THREE.Vector3(), lnD = new THREE.Vector3();
+  function inApproachLane(pos, dir) {
+    if (!ms || !ms.root.visible) return false;
+    const reach = 48 * WORLD.warnings.laneLength;
+    for (const b of ms.D.bays) {
+      toLocal(pos, lnP).applyMatrix4(b.Minv); lnD.copy(dir).applyQuaternion(msQi).applyQuaternion(tmpQ4.copy(b.Q).invert());
+      if (lnP.x < -reach || lnP.x > b.BD + 1 || lnP.y < -4 || lnP.y > b.BH + 4 || lnP.z < b.zs - 4 || lnP.z > b.ze + 4) continue;
+      if (lnP.x > -6 || lnD.x > 0.35) return true;    // at the mouth or inside, or heading in
+    }
+    return false;
+  }
+  const tmpQ4 = new THREE.Quaternion();
+  // A few soft sparks where the ship scrapes the hull (never a flash).
+  function contactSparks(p, n, k = 1) {
+    for (let i = 0; i < Math.round(3 + 6 * k); i++) { puff(sparks, p, i % 3 ? '#FFC98A' : '#FFF2D8', 0.4 + Math.random() * 0.5, 4 + 8 * k, 0.8); sparks.items[sparks.items.length - 1].vel.addScaledVector(n, 3 + 4 * k); }
+    if (k > 0.4) puff(glows, p, '#FFD9A8', 0.4, 0, 0.35 * k);
   }
   // Does the straight line a-b pass near the mothership?
   function blocks(a, b, margin) { if (!ms) return false; return segDist(a, b, root.position) < ms.D.L * 0.56 + margin; }
@@ -1645,5 +1804,5 @@ export function makeFleet(opts) {
   };
   // How far out anything might need to go to see the fleet (for the free camera's range).
   const reach = () => ms ? station.pos.length() + ms.D.L * 0.8 : 0;
-  return { root, fx, intercept, setFund, update, keepClear, blocks, info, get reach() { return reach(); }, debug, get present() { return !!ms; }, get size() { return ms?.D; }, get yaw() { return station.yaw; }, quaternion: msQ, toWorld };
+  return { root, fx, intercept, setFund, update, keepClear, collideShip, hullSurfaceDist, inApproachLane, contactSparks, blocks, info, get reach() { return reach(); }, debug, get present() { return !!ms; }, get size() { return ms?.D; }, get yaw() { return station.yaw; }, quaternion: msQ, toWorld };
 }

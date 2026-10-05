@@ -53,3 +53,21 @@ button:focus-visible,canvas:focus-visible,a:focus-visible,input:focus-visible,se
   color:var(--ink);backdrop-filter:blur(6px);pointer-events:none;white-space:nowrap}
 .layer-line[hidden]{display:none}
 .cloud-veil{position:fixed;inset:0;pointer-events:none;opacity:0;background:#E8EEF4}
+
+/* Radio messages from the guardian fleet when you fly close to the mothership: calm, never alarming. */
+.radio{position:fixed;top:calc(160px + env(safe-area-inset-top,0px));left:50%;transform:translate(-50%,-6px);display:flex;align-items:center;gap:12px;
+  max-width:min(560px,calc(100% - 32px));background:var(--panel);border:1.5px solid rgba(127,224,194,.55);border-radius:14px;padding:10px 16px 10px 12px;
+  backdrop-filter:blur(8px);box-shadow:0 6px 24px rgba(0,0,0,.35);opacity:0;transition:opacity .6s,transform .6s;pointer-events:none}
+.radio.show{opacity:1;transform:translate(-50%,0)}
+.radio[hidden]{display:none}
+.radio svg{flex:none;width:28px;height:28px;fill:none;stroke:var(--accent);stroke-width:1.8;stroke-linecap:round}
+.radio p{margin:0;font-size:.95rem;line-height:1.35}
+.radio b{display:block;font-size:.75rem;letter-spacing:.06em;text-transform:uppercase;color:var(--mute)}
+.radio[data-level="2"]{border-color:rgba(255,197,107,.6)}.radio[data-level="2"] svg{stroke:var(--warm)}
+.radio[data-level="3"]{border-color:rgba(255,160,110,.75)}.radio[data-level="3"] svg{stroke:#FFA06E}
+@media (prefers-reduced-motion: reduce){.radio{transition:opacity .6s;transform:translate(-50%,0)}}
+/* Cruise: a small note while the ship is going faster than a boost. */
+.cruise-line{position:fixed;left:50%;bottom:calc(54px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);margin:0;
+  background:rgba(20,28,52,.6);border:1px solid rgba(127,224,194,.4);border-radius:999px;padding:4px 12px;font-size:.8rem;font-weight:700;color:var(--accent);
+  backdrop-filter:blur(6px);pointer-events:none;white-space:nowrap}
+.cruise-line[hidden]{display:none}

@@ -6,6 +6,7 @@
 // Everything grows smoothly with depth. Debt planets are stormy: darker clouds, rain and soft distant lightning, scaled by
 // how much is still owed. With reduced motion there is no shake, shimmer or rain movement: only gentle fades.
 import * as THREE from 'three';
+import { WORLD } from './settings.js';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
@@ -107,7 +108,9 @@ export function makeAirFX({ universe, camera, shipRadius }) {
     state.deck = best && d < L.deck + 8;
     state.layer = !best || g <= 0.001 ? null : state.deck ? 'Cloud deck' : c > 0.02 ? 'Cloud layer' : u > 0.02 ? 'Upper atmosphere' : 'Outer glow';
     // Slower in thicker air, so arriving at the deck is always gentle.
-    state.maxSpeed = c > 0 ? 40 + (1 - c) * 80 : u > 0 ? 400 - 280 * u : Infinity;
+    // The limits ease from one layer to the next, with no step anywhere (settings.js: WORLD.air).
+    const A = WORLD.air;
+    state.maxSpeed = c > 0 ? A.deck + (1 - c) * (A.cloud - A.deck) : u > 0 ? A.upper - (A.upper - A.upperLow) * u : g > 0 ? A.glow / Math.max(g * g, 1e-4) : Infinity;
     state.flare = u * 0.3 + c * 0.15;
     state.starFade = Math.max(0.05, 1 - 0.55 * u - 0.45 * c);
     // Every planet's ring of air brightens as you come close, and fades once you're inside it.

@@ -8,6 +8,7 @@ import { makeFleet } from './fleet.js';
 import { airProfile, airLevels, makeAirFX } from './atmosphere.js';
 import { makeSurface, SURF_ORIGIN, CLOUD_BASE, EXIT_ALT, ENTRY_ALT } from './surface.js';
 import { MOODS } from './pilot.js';
+import { WORLD, SHIP_LEN } from './settings.js';
 
 const cv = document.getElementById('space');
 cv.tabIndex = 0;
@@ -56,7 +57,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.localClippingEnabled = true; // for the ship's dollhouse cutaway
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, 1, 0.2, 150000);
+const camera = new THREE.PerspectiveCamera(60, 1, WORLD.camera.near, WORLD.camera.far);
 // Floating origin: everything in the world (planets, ships, the fleet, the camera) lives in `universe`, whose position is
 // moved now and then so the camera stays near the real origin. Positions in code stay in universe space; only what the
 // GPU sees is re-centred, so nothing jitters however far you fly. The sky and the sun stay outside it, around the camera.
@@ -161,7 +162,7 @@ function bakeNebula() {
 
 // Stars in every direction at different brightness, plus a denser band along the galaxy.
 function makeStars() {
-  const r = rng(424242), count = coarse ? 6000 : 9000, R = 50000;   // far beyond any planet, so nothing is ever behind the stars
+  const r = rng(424242), count = coarse ? 6000 : 9000, R = WORLD.camera.starDistance;   // far beyond any planet, so nothing is ever behind the stars
   const pos = new Float32Array(count * 3), col = new Float32Array(count * 3), size = new Float32Array(count);
   const bandN = new THREE.Vector3(0.3, 1, 0.25).normalize(), v = new THREE.Vector3(), c = new THREE.Color();
   const tints = ['#FFFFFF', '#FFFFFF', '#DCE6FF', '#BFD6FF', '#FFE3B8', '#FFD2A6'];
@@ -214,7 +215,7 @@ function makeSun() {
   const add = (stops, scale, opacity) => {
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(stops), blending: THREE.AdditiveBlending,
       depthWrite: false, transparent: true, opacity, toneMapped: false }));
-    s.scale.setScalar(scale * 20); s.position.copy(SUN_DIR).multiplyScalar(44000); s.renderOrder = -1; group.add(s);
+    const D = WORLD.camera.sunDistance; s.scale.setScalar(scale * 20 * D / 44000); s.position.copy(SUN_DIR).multiplyScalar(D); s.renderOrder = -1; group.add(s);
   };
   add([[0, 'rgba(255,214,160,0.5)'], [0.3, 'rgba(255,170,110,0.12)'], [1, 'rgba(255,140,90,0)']], 1500, 0.8);
   add([[0, 'rgba(255,255,245,1)'], [0.22, 'rgba(255,240,205,1)'], [0.32, 'rgba(255,205,140,0.45)'], [1, 'rgba(255,180,120,0)']], 190, 1);
@@ -282,14 +283,16 @@ function readGoals() {
   return { list: [...list, ...debtPlanets(S, new Set(list.map(p => p.myth)))], examples: false };
 }
 const STORM_BIOME = { name: 'storm', tint: '#5A5470', kind: 'bands', land: ['#3E3A52', '#4A4560', '#5A5470', '#36324A', '#6A6382', '#433E58'], atmo: '#8A80B8' };
-// A planet starts at 70% of its full size and reaches full size when its goal is met.
-const sizeFor = progress => 0.7 + 0.3 * progress;
+// A planet starts at a fraction of its full size (settings.js) and reaches full size when its goal is met.
+const PW = WORLD.planets;
+const sizeFor = progress => PW.startSize + (1 - PW.startSize) * progress;
 
 // Decide a planet's look from its name. Same name in, same planet out.
 // The +27 nudges the seeds so the first few planets someone makes all get different biomes.
-// Planets are big: at full size from 105 to 276 units across the middle (the ship is 18.4 long), so the smallest is about
-// 8 ship lengths across even when its goal has just started, and the largest about 30.
-const PLANET_R = old => 105 + (old - 7) / 12 * 171;
+// Planets are huge (settings.js): the smallest is at least 100 ship lengths across even when its goal has only just
+// started, and the largest about 500 at full size. (old is the planet's seeded size from before, 7 to 19.)
+const R_MIN = PW.smallestDiameter * SHIP_LEN / 2 / PW.startSize, R_MAX = PW.largestDiameter * SHIP_LEN / 2;
+const PLANET_R = old => R_MIN + clamp((old - 7) / 12, 0, 1) * (R_MAX - R_MIN);
 function makeLook(name, debt = false) {
   const r = rng(hash(name) + 27);
   let biome = BIOMES[Math.floor(r() * BIOMES.length)];
@@ -436,15 +439,20 @@ function cloudShell(look, air, radius) {
 function buildPlanet(p) {
   const look = makeLook(p.myth, p.debt), N = makeNoise(look.seed), fr = rng(look.seed + 1);
   const air = airProfile(look, rng(look.seed + 5), p.debt ? p.storm : 0);
-  // Level of detail: a coarse ball far away, finer as you come close, and the finest only once you're near.
-  const DETAIL = coarse ? [8, 18, 30] : [10, 24, 44];
+  // Level of detail: a coarse ball far away, finer as you come close, and the two finest only built once you're near.
+  const DETAIL = coarse ? [8, 18, 30, 40] : [10, 24, 44, 64];
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85, metalness: 0 });
   const mid = surfaceGeometry(look, N, DETAIL[1]);
   const lod = new THREE.LOD();
   lod.addLevel(new THREE.Mesh(mid.geo, mat), look.radius * 3.2);
   lod.addLevel(new THREE.Mesh(surfaceGeometry(look, N, DETAIL[0]).geo, mat), look.radius * 9);
-  // The finest level is built the first time someone comes close (see refineNear), so start-up stays quick.
-  const refine = () => { lod.addLevel(new THREE.Mesh(surfaceGeometry(look, N, DETAIL[2]).geo, mat), 0); lod.levels.sort((a, b) => a.distance - b.distance); };
+  // The finer levels are built the first time someone comes close (see the frame loop), so start-up stays quick.
+  let fine = null;
+  const refine = () => { fine = { distance: 0, object: new THREE.Mesh(surfaceGeometry(look, N, DETAIL[2]).geo, mat) }; lod.addLevel(fine.object, 0); lod.levels.sort((a, b) => a.distance - b.distance); };
+  const refine2 = () => {
+    const lvl = lod.levels.find(l => l.object === fine?.object); if (lvl) lvl.distance = look.radius * PW.finestWithin;
+    lod.addLevel(new THREE.Mesh(surfaceGeometry(look, N, DETAIL[3]).geo, mat), 0); lod.levels.sort((a, b) => a.distance - b.distance);
+  };
   const { hs, pos, n } = mid;
 
   // tilt holds the axis tilt, body spins around it. Moons ride along with the slow spin.
@@ -472,6 +480,7 @@ function buildPlanet(p) {
     }
   }
 
+  const moons = [];
   for (const m of look.moons) {
     const pivot = new THREE.Group();
     pivot.rotation.set(m.incl, m.angle, 0);
@@ -480,7 +489,7 @@ function buildPlanet(p) {
     const moon = new THREE.Mesh(mg, new THREE.MeshStandardMaterial({ color: tmpColor.setHSL(0.6 + m.tint * 0.15, 0.12, 0.62).clone(),
       flatShading: true, roughness: 1 }));
     moon.position.x = look.radius * m.dist;
-    pivot.add(moon); body.add(pivot);
+    pivot.add(moon); body.add(pivot); moons.push({ mesh: moon, r: mr * 1.05 });
   }
 
   const group = new THREE.Group();
@@ -494,7 +503,7 @@ function buildPlanet(p) {
   tilt.add(clouds);
   if (look.ring) tilt.add(makeRing(look));
   const airTop = air.surf + 0.05 + air.cloud + air.upper + air.glow;
-  return { ...p, look, air, group, body, clouds, lod, refine, refined: false, glow: atmo.uniforms.boost, size: sizeFor(p.progress), pulse: 0, airGlow: 1,
+  return { ...p, look, air, group, body, clouds, lod, refine, refine2, refined: 0, moons, glow: atmo.uniforms.boost, size: sizeFor(p.progress), pulse: 0, airGlow: 1,
     reach: look.radius * Math.max(look.ring ? look.ring.outer : 1.2, airTop, ...look.moons.map(m => m.dist + m.size)) };
 }
 
@@ -504,7 +513,7 @@ function buildPlanet(p) {
 // Planets are far apart, with big empty space between them (each one's reach includes its air, rings and moons).
 // Debt planets are placed after all the goal planets.
 let volume = 3000;
-const spreadFor = slot => 2600 + 1500 * Math.sqrt(slot + 1);
+const spreadFor = slot => PW.spreadBase + PW.spreadPerSlot * Math.sqrt(slot + 1);
 function layout(planets) {
   const goalMax = Math.max(0, ...planets.filter(p => !p.debt).map(p => p.slot));
   for (const p of planets) p.spreadSlot = p.debt ? goalMax + 1 + (p.slot - 1000) : p.slot;
@@ -514,9 +523,9 @@ function layout(planets) {
     const r = rng(hash(p.myth) + 11), v = new THREE.Vector3();
     let spread = spreadFor(p.spreadSlot);
     for (let tries = 0; ; tries++) {
-      const th = r() * Math.PI * 2, y = r() * 1.6 - 0.8, d = lerp(1400 + p.reach * 2, spread, Math.pow(r(), 0.8));
+      const th = r() * Math.PI * 2, y = r() * 1.6 - 0.8, d = lerp(PW.nearest + p.reach, spread, Math.pow(r(), 0.8));
       v.set(Math.cos(th) * Math.sqrt(1 - y * y), y, Math.sin(th) * Math.sqrt(1 - y * y)).multiplyScalar(d);
-      if (placed.every(q => q.group.position.distanceTo(v) > q.reach + p.reach + 1200)) break;
+      if (placed.every(q => q.group.position.distanceTo(v) > q.reach + p.reach + PW.minGap)) break;
       if (tries > 40) spread *= 1.03; // crowded: let it drift a little further out
     }
     p.group.position.copy(v);
@@ -540,15 +549,38 @@ const descent = { phase: null, planet: null, dir: new THREE.Vector3() };
 let noDescend = null, veil = 0, veilWant = 0, gearZone = 'high';
 const SURF_AIR = { maxSpeed: 180, flare: 0, shake: new THREE.Vector3(), fov: 0, starFade: 1, layer: 'Surface' };
 const surfLocal = new THREE.Vector3(), surfCam = new THREE.Vector3();
-// Speeds suit the big world: a comfortable top speed, and Shift ramps up to a fast cruise for crossing between planets.
-const MAX_SPEED = 70, MAX_BACK = 15, MAX_CLIMB = 25, TURN_RATE = 0.9, BOOST_MAX = 1500;
-const flight = { yaw: 0, speed: 0, yawVel: 0, climb: 0, accel: 0, turnTo: null };
+// Speeds (settings.js): a comfortable top speed near things, Shift for a fast boost, and far from everything Shift keeps
+// ramping up into a very fast cruise that slows down by itself as anything comes near.
+const SP = WORLD.speed, GRAV = WORLD.gravity, COL = WORLD.collision;
+const MAX_SPEED = SP.top, MAX_BACK = SP.back, MAX_CLIMB = SP.climb, TURN_RATE = SP.turn, BOOST_MAX = SP.boost;
+// The ship flies in its own frame: flight.q turns it; shipUp is its up and shipFwd its nose. Outside every planet's gravity
+// zone its up drifts back to the world's up; inside one it turns smoothly to point away from the planet's centre, so the belly
+// faces the ground, the horizon levels out, and Space / C mean away from / toward the planet. A/D always turn about the
+// ship's own up. sink is momentum toward the planet that carries on as a fading descent; push is a soft bump off a hull.
+const flight = { q: new THREE.Quaternion(), speed: 0, yawVel: 0, climb: 0, sink: 0, accel: 0, turnTo: null, push: new THREE.Vector3(), bump: 0,
+  gravity: 0, room: Infinity, hullDist: Infinity, sparkT: 0, touchT: 9 };
+const WORLD_UP = new THREE.Vector3(0, 1, 0), shipUp = new THREE.Vector3(0, 1, 0), shipFwd = new THREE.Vector3(0, 0, -1), camUp = new THREE.Vector3(0, 1, 0);
+const fq1 = new THREE.Quaternion(), fq2 = new THREE.Quaternion(), fv1 = new THREE.Vector3(), fv2 = new THREE.Vector3(), fv3 = new THREE.Vector3(), fm = new THREE.Matrix4();
+function frameVectors() { shipUp.set(0, 1, 0).applyQuaternion(flight.q); shipFwd.set(0, 0, -1).applyQuaternion(flight.q); fwd.copy(shipFwd); }
+// The signed angle (about the ship's up) from its nose to a direction.
+function headingTo(dir) {
+  fv1.copy(dir).addScaledVector(shipUp, -dir.dot(shipUp)); if (fv1.lengthSq() < 1e-12) return 0; fv1.normalize();
+  return Math.atan2(fv2.crossVectors(shipFwd, fv1).dot(shipUp), shipFwd.dot(fv1));
+}
+// Level the ship with a given up, nose as close to a given direction as it can be.
+function setFrame(up, forward) {
+  const f = fv1.copy(forward).addScaledVector(up, -forward.dot(up));
+  if (f.lengthSq() < 1e-10) f.copy(Math.abs(up.y) < 0.9 ? WORLD_UP : fv2.set(1, 0, 0)).cross(up);
+  f.normalize(); const r = fv2.crossVectors(f, up).normalize();
+  flight.q.setFromRotationMatrix(fm.makeBasis(r, fv3.copy(up), f.negate())); frameVectors();
+}
+const setHeading = yaw => { flight.q.setFromAxisAngle(WORLD_UP, yaw); frameVectors(); };
 // Default view: behind, above and a little to the right of the ship (a back three-quarter view).
 const PITCH_REST = 0.3, YAW_REST = 0.7, FAR = 26;
 // Camera and hull share one state machine: outside -> entering -> inside -> leaving -> outside.
 // Only this machine opens or closes the hull. Scrolling in past ENTER_AT (1x the ship's length) enters; inside, only
 // scrolling out past EXIT_AT (1.8x) or the "Back outside" button leaves. Both measure the camera's target distance.
-const SHIP_LEN = 18.4, ENTER_AT = SHIP_LEN * 1.0, EXIT_AT = SHIP_LEN * 1.8;
+const ENTER_AT = SHIP_LEN * 1.0, EXIT_AT = SHIP_LEN * 1.8;
 const IN_DIST = 15, IN_YAW = 1.45, IN_PITCH = 0.12, GLIDE = 1.4;   // where the camera settles inside, and how long the glide takes
 const view = { mode: 'outside', t: 0, from: null, to: null };
 const chase = { dist: FAR, tDist: FAR, yaw: YAW_REST, pitch: PITCH_REST, dragging: false, ready: false };
@@ -672,7 +704,8 @@ function leaveFree() {
   // Turn wherever the camera is into follow-camera terms, then glide back out; the hull closes once the camera is clear.
   cameraTargets(pivot);
   const off = camera.position.clone().sub(pivot), d = Math.max(0.5, off.length());
-  chase.dist = d; chase.pitch = Math.asin(clamp(off.y / d, -1, 1)); chase.yaw = wrapAngle(Math.atan2(off.x, off.z) - flight.yaw);
+  off.applyQuaternion(qInv.copy(flight.q).invert());   // into the ship's own frame
+  chase.dist = d; chase.pitch = Math.asin(clamp(off.y / d, -1, 1)); chase.yaw = Math.atan2(off.x, off.z);
   freeKeys.clear();
   view.mode = 'leaving'; view.closeLate = true;
   glide({ dist: clamp(Math.max(FAR, d), ENTER_AT + 2, 70), yaw: YAW_REST, pitch: PITCH_REST });
@@ -696,7 +729,8 @@ function leaveFleet() {
   // Glide back to the ship from wherever the camera is, like leaving the free camera.
   pivot.copy(fleetCam.look);
   const off = camera.position.clone().sub(pivot), d = Math.max(1, off.length());
-  chase.dist = d; chase.pitch = Math.asin(clamp(off.y / d, -1, 1)); chase.yaw = wrapAngle(Math.atan2(off.x, off.z) - flight.yaw);
+  off.applyQuaternion(qInv.copy(flight.q).invert());   // into the ship's own frame
+  chase.dist = d; chase.pitch = Math.asin(clamp(off.y / d, -1, 1)); chase.yaw = Math.atan2(off.x, off.z);
   view.mode = 'leaving'; view.closeLate = false;
   glide({ dist: FAR, yaw: YAW_REST, pitch: PITCH_REST }, reduced ? GLIDE : 2.6);
   chase.tDist = FAR; updateLookBtn();
@@ -761,7 +795,7 @@ cv.addEventListener('pointercancel', endPointer);
 cv.addEventListener('wheel', e => {
   e.preventDefault();
   const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * innerHeight : e.deltaY;
-  if (view.mode === 'free') { free.speed = clamp(free.speed * Math.exp(-px * 0.0015), 0.5, 900); return; } // scroll sets the free camera's speed (up to fast enough to fly along a carrier)
+  if (view.mode === 'free') { free.speed = clamp(free.speed * Math.exp(-px * 0.0015), 0.5, WORLD.camera.freeMaxSpeed); return; } // scroll sets the free camera's speed (up to fast enough to cross between planets)
   zoom(Math.exp(px * 0.0012));
 }, { passive: false });
 
@@ -776,13 +810,13 @@ function keepClear(pos, pad, withFleet = true, bounded = true, withPlanets = tru
     if (tmpV.length() < min) pos.copy(p.group.position).addScaledVector(tmpV.normalize(), min); // slide along it
   }
   if (withFleet) fleet.keepClear(pos, pad);   // and never into the guardian mothership
-  if (bounded && pos.length() > volume * 1.5) pos.setLength(volume * 1.5);
+  if (bounded && pos.length() > camReach() * 1.3) pos.setLength(camReach() * 1.3);
 }
 // The cameras (not the ship) may go far enough out to see the whole guardian fleet.
 const camReach = () => Math.max(volume * 1.5, fleet.reach);
 
 // ---------- Autopilot: when nobody is steering, cruise between waypoints, hover a while, and go somewhere new ----------
-const AUTO_AFTER = 3, CRUISE = 30, ARRIVE = 30;
+const AUTO_AFTER = 3, CRUISE = 30, ARRIVE = WORLD.autopilot.arrive;
 const auto = { idle: 0, active: false, target: null, state: 'pick', hover: 0, travel: 0, heading: null, askedCrew: false };
 // Distance from point c to the segment a-b.
 function segDist(a, b, c) {
@@ -801,13 +835,13 @@ function pickWaypoint() {
     if (planets.length && Math.random() < 0.3) {
       // Cruise past a planet, keeping a comfortable distance.
       const p = planets[Math.floor(Math.random() * planets.length)], a = Math.random() * Math.PI * 2;
-      cand = p.group.position.clone().add(new THREE.Vector3(Math.cos(a), (Math.random() - 0.5) * 0.4, Math.sin(a)).normalize().multiplyScalar(autoClear(p) + margin + 100 + Math.random() * 400));
+      cand = p.group.position.clone().add(new THREE.Vector3(Math.cos(a), (Math.random() - 0.5) * 0.4, Math.sin(a)).normalize().multiplyScalar(autoClear(p) + margin + p.look.radius * (0.1 + Math.random() * 0.5)));
     } else {
       // A clearly different direction from the last trip, a good distance away.
-      const turn = (Math.random() < 0.5 ? -1 : 1) * (1.0 + Math.random() * 1.6), yaw = flight.yaw + turn, d = 600 + Math.random() * 2400;
-      cand = pos.clone().add(new THREE.Vector3(-Math.sin(yaw), (Math.random() - 0.5) * 0.35, -Math.cos(yaw)).multiplyScalar(d));
+      const turn = (Math.random() < 0.5 ? -1 : 1) * (1.0 + Math.random() * 1.6), AP = WORLD.autopilot, d = AP.legMin + Math.random() * (AP.legMax - AP.legMin);
+      cand = shipFwd.clone().applyAxisAngle(shipUp, turn).addScaledVector(shipUp, (Math.random() - 0.5) * 0.35).normalize().multiplyScalar(d).add(pos);
     }
-    if (cand.length() > volume * 1.25 || cand.distanceTo(pos) < 300) continue;
+    if (cand.length() > volume * 1.25 || cand.distanceTo(pos) < WORLD.autopilot.legMin * 0.5) continue;
     const dir = cand.clone().sub(pos).normalize();
     if (auto.heading && dir.dot(auto.heading) > 0.65) continue; // not the same way again
     if (planets.some(p => segDist(pos, cand, p.group.position) < autoClear(p) + margin)) continue;
@@ -827,15 +861,16 @@ function autopilot(dt) {
   if (auto.state === 'travel') {
     auto.travel += dt;
     const to = auto.target.clone().sub(pos), dist = to.length();
-    const diff = wrapAngle(Math.atan2(-to.x, -to.z) - flight.yaw);
+    const diff = headingTo(to);
     // Slow right down for big turns (so it turns in place instead of looping), and ease in when arriving.
     const align = Math.max(0, Math.cos(diff)) ** 2;
-    // Long legs are flown fast and the last stretch slowly, so trips between far planets don't drag.
-    const speed = clamp(dist * 0.22, 20, 600) * align;
+    // Long legs are flown fast and the last stretch slowly, so trips between far planets don't drag. Like the pilot, it
+    // never goes faster than the room ahead allows.
+    const speed = Math.min(clamp(dist * 0.22, 20, SP.autopilot), Math.max(20, flight.room * SP.cruiseReach)) * align;
     if (dist < ARRIVE || auto.travel > 150) {
       auto.state = 'hover'; auto.hover = 5 + Math.random() * 4; auto.askedCrew = false;
     }
-    return { speed, turn: clamp(diff * 1.1, -1, 1), climb: clamp(to.y / Math.max(12, dist * 0.15), -1, 1), cruising: true };
+    return { speed, turn: clamp(diff * 1.1, -1, 1), climb: clamp(to.dot(shipUp) / Math.max(12, dist * 0.15), -1, 1), cruising: true };
   }
   // Hover: a few seconds, or as long as the pilot is busy with something. Sometimes the pilot gets up for a while.
   auto.hover -= dt;
@@ -844,6 +879,33 @@ function autopilot(dt) {
   return { speed: 0, turn: 0, climb: 0, cruising: false };
 }
 
+// How much room there is around a point: to the nearest planet's cloud deck, moon, or the mothership's hull. Cruise and
+// climb speeds are limited by it, so the ship always slows down by itself as anything comes near.
+function roomAt(pos) {
+  let c = Infinity;
+  if (!surface.active) for (const p of planets) {
+    c = Math.min(c, pos.distanceTo(p.group.position) - airLevels(p, ship.radius).deck);
+    for (const m of p.moons) c = Math.min(c, m.mesh.getWorldPosition(fv3).sub(universe.position).distanceTo(pos) - m.r * p.group.scale.x - ship.radius);
+  }
+  flight.hullDist = fleet.present && !surface.active ? fleet.hullSurfaceDist(pos, WORLD.warnings.level2 * SHIP_LEN * 1.5) : Infinity;
+  return Math.max(0, Math.min(c, flight.hullDist));
+}
+// The gravity zone: from the top of a planet's air down to the ground. Returns how strongly the ship's up should point
+// away from the nearest planet (0 to 1, a smoothstep down through the outer glow and upper air) and sets gravUp to that way.
+const gravUp = new THREE.Vector3(), targetUp = new THREE.Vector3(), radialBefore = new THREE.Vector3();
+let gravPlanet = null;
+function gravityAt(pos) {
+  let best = 0, bp = null;
+  if (!surface.active) for (const p of planets) {
+    const L = airLevels(p, ship.radius), d = pos.distanceTo(p.group.position);
+    if (d > L.glowTop) continue;
+    const w = smooth01(L.upperTop + (L.glowTop - L.upperTop) * (1 - GRAV.alignFrom), L.cloudTop, d);
+    if (w > best || !bp) { best = w; bp = p; }
+  }
+  if (bp) gravUp.copy(pos).sub(bp.group.position).normalize();
+  gravPlanet = best > 0 ? bp : null;
+  return best;
+}
 // Smooth acceleration, gentle slowdown, and turning that eases in and out.
 function fly(dt) {
   const on = k => held(FLIGHT_KEYS, keys, k);
@@ -851,7 +913,7 @@ function fly(dt) {
   let ahead = live ? on('fwd') - on('back') : 0, turnIn = live ? on('left') - on('right') : 0, climbIn = live ? on('up') - on('down') : 0;
   const outside = view.mode === 'outside';
   const steering = (on('fwd') || on('back') || on('left') || on('right') || on('up') || on('down')) > 0 && outside;
-  const boosting = live && on('boost') && ahead > 0;   // Shift + forward: ramp up to a fast cruise for crossing between planets
+  const boosting = live && on('boost') && ahead > 0;   // Shift + forward: boost, and far from everything a very fast cruise
   // Any key takes over at once; letting go hands back to the autopilot after a few quiet seconds.
   auto.idle = steering || flight.turnTo !== null ? 0 : auto.idle + dt;
   if (boosting) thrustBoost = 1; else thrustBoost = 0;
@@ -859,10 +921,29 @@ function fly(dt) {
   else if (!auto.active && auto.idle > AUTO_AFTER && !reduced && outside && !surface.active && !descent.phase) auto.active = true;
   if (reduced || !outside || surface.active || descent.phase) auto.active = false;   // inside, on a surface or going down, the ship stays put
   if (!outside) insideLife(dt);
+  const pos = ship.root.position;
+  flight.room = surface.active ? Infinity : roomAt(pos);
+
+  // Gravity: ease the ship's up toward the planet's "away" (or back to the world's up), turning the whole frame the least
+  // amount, so the nose stays level with the new horizon. Motion that pointed down at the planet carries on as a descent.
+  const w = gravityAt(pos);
+  flight.gravity = w;
+  if (w > 0) targetUp.copy(WORLD_UP).applyQuaternion(fq2.identity().slerp(fq1.setFromUnitVectors(WORLD_UP, gravUp), w));
+  else targetUp.copy(WORLD_UP);
+  if (shipUp.dot(targetUp) < 0.999999) {
+    fq1.setFromUnitVectors(shipUp, targetUp);
+    fq2.identity().slerp(fq1, 1 - Math.exp(-dt / GRAV.alignSeconds));
+    const before = fv3.copy(shipFwd).multiplyScalar(flight.speed);
+    flight.q.premultiply(fq2).normalize(); frameVectors();
+    if (w > 0) flight.sink += before.dot(shipUp);
+  }
+
   const before = flight.speed;
   let cruising = false, thrust = ahead > 0 ? Math.min(1, 0.8 + 0.2 * thrustBoost) : 0;
   // Until the pilot is back in the seat, the ship only speeds up gently, so nobody gets left behind.
   const limit = ship.atControls ? 1 : 0.2;
+  // Far from everything Shift keeps ramping up; near anything the top speed shrinks with the room left.
+  const boostCap = Math.min(clamp(flight.room * SP.cruiseReach, MAX_SPEED, SP.cruise) * limit, Math.max(air.maxSpeed, 1));
   if (auto.active) {
     const a = autopilot(dt);
     cruising = a.cruising;
@@ -870,35 +951,78 @@ function fly(dt) {
     flight.speed += clamp(want - flight.speed, -rate * dt, rate * dt);
     turnIn = a.turn; climbIn = a.climb;
     thrust = want > flight.speed + 0.5 ? 0.9 : flight.speed > 2 ? 0.35 : 0;
-  } else if (boosting) flight.speed = Math.min(BOOST_MAX * limit, flight.speed + (40 + Math.max(0, flight.speed) * 1.3) * dt);
+  } else if (boosting && flight.speed <= boostCap) flight.speed = Math.min(boostCap, flight.speed + (40 + Math.max(0, flight.speed) * 1.3) * dt);
+  else if (boosting) flight.speed = Math.max(boostCap, flight.speed - (30 + flight.speed * 1.4) * dt);
   else if (ahead > 0 && flight.speed > MAX_SPEED * limit) flight.speed = Math.max(MAX_SPEED * limit, flight.speed - (30 + flight.speed * 1.4) * dt); // ease down after a boost
   else if (ahead > 0) flight.speed = Math.min(MAX_SPEED * limit, flight.speed + (flight.speed < 0 ? 40 : 18 + 10 * Math.max(0, 1 - flight.speed / MAX_SPEED)) * dt);
   else if (flight.speed > MAX_SPEED) flight.speed = Math.max(0, flight.speed - (30 + flight.speed * 1.4) * dt);
   else if (ahead < 0) flight.speed = Math.max(-MAX_BACK, flight.speed - (flight.speed > 0 ? 24 : 7) * dt);
   else { flight.speed *= Math.exp(-dt * 1.1); if (Math.abs(flight.speed) < 0.02) flight.speed = 0; }
-  // Thicker air slows the ship, so it always arrives at the cloud deck gently.
-  if (flight.speed > air.maxSpeed) flight.speed += (air.maxSpeed - flight.speed) * (1 - Math.exp(-dt * 2.5));
+  // Thicker air slows the ship, so it always arrives at the cloud deck gently; so does running out of room.
+  const cap = Math.min(air.maxSpeed, Math.max(MAX_SPEED, flight.room * SP.cruiseReach));
+  if (flight.speed > cap) flight.speed += (cap - flight.speed) * (1 - Math.exp(-dt * 2.5));
   flight.accel = (flight.speed - before) / Math.max(dt, 1e-4);
   let want = turnIn * TURN_RATE * (ship.atControls ? 1 : 0.5);
   if (flight.turnTo !== null && !steering) {
-    const diff = wrapAngle(flight.turnTo - flight.yaw);
+    const diff = headingTo(flight.turnTo);
     want = clamp(diff * 2, -TURN_RATE, TURN_RATE);
     if (Math.abs(diff) < 0.004) flight.turnTo = null;
   }
   flight.yawVel += (want - flight.yawVel) * (1 - Math.exp(-dt * 3));
-  flight.yaw += flight.yawVel * dt;
-  flight.climb += (climbIn * MAX_CLIMB * (surface.active ? 2.4 : 1) - flight.climb) * (1 - Math.exp(-dt * 2));   // faster up and down below the clouds, where the drops are big
-  ship.root.rotation.y = flight.yaw;
-  fwd.set(-Math.sin(flight.yaw), 0, -Math.cos(flight.yaw));
-  ship.root.position.addScaledVector(fwd, flight.speed * dt);
-  ship.root.position.y += flight.climb * dt;
+  flight.q.premultiply(fq1.setFromAxisAngle(shipUp, flight.yawVel * dt)).normalize(); frameVectors();
+  // Up and down: faster with room to spare (big layers of air go by quickly), slow and careful near anything.
+  const maxClimb = surface.active ? MAX_CLIMB * 2.4 : clamp(flight.room * SP.climbReach, MAX_CLIMB, SP.climbMax);
+  flight.climb += (climbIn * maxClimb - flight.climb) * (1 - Math.exp(-dt * 2));
+  // The carried-on descent fades, faster if you ask to climb, and never outruns the air or the room below.
+  const sinkCap = Math.min(air.maxSpeed, Math.max(MAX_CLIMB, flight.room * SP.cruiseReach));
+  flight.sink = clamp(flight.sink * Math.exp(-dt / GRAV.sinkSeconds * (climbIn > 0 ? 6 : 1)), -sinkCap, sinkCap);
+  if (surface.active) flight.sink = 0;
+  if (gravPlanet) radialBefore.copy(pos).sub(gravPlanet.group.position).normalize();
+  pos.addScaledVector(shipFwd, flight.speed * dt).addScaledVector(shipUp, (flight.climb + flight.sink) * dt).addScaledVector(flight.push, dt);
+  // Level flight follows the planet's curve: as the ship moves round it, its frame turns with it exactly (no lag), so
+  // flying level keeps the same height above the ground instead of slowly climbing away along a straight line.
+  if (gravPlanet) { fq1.setFromUnitVectors(radialBefore, fv1.copy(pos).sub(gravPlanet.group.position).normalize()); flight.q.premultiply(fq2.identity().slerp(fq1, w)).normalize(); frameVectors(); }
+  ship.root.quaternion.copy(flight.q);
+  flight.push.multiplyScalar(Math.exp(-dt * 2));
   if (surface.active) flyLow(dt);
-  else { keepClear(ship.root.position, ship.radius + 2, true, true, false); holdAtDeck(dt); checkDescent(); }
+  else { collide(dt); stayInWorld(pos); holdAtDeck(dt); checkDescent(); }
   if (Math.abs(flight.speed) > 3) thrust = Math.min(1.25, thrust + air.flare);   // the engine flares a little in thin air
   ship.update(dt, { thrust, flying: steering, cruising: cruising || (auto.active && Math.abs(flight.speed) > 1), stopped: Math.abs(flight.speed) < 1,
     visible: shipOnScreen(), turn: clamp(flight.yawVel / TURN_RATE, -1, 1), turnVel: flight.yawVel,
-    accel: flight.accel, speedFrac: Math.min(1, Math.abs(flight.speed) / CRUISE), climb: flight.climb / MAX_CLIMB, reduced });
+    accel: flight.accel, speedFrac: Math.min(1, Math.abs(flight.speed) / CRUISE), climb: clamp((flight.climb + flight.sink) / MAX_CLIMB, -1.5, 1.5), reduced });
 }
+// Real, harmless collisions with the mothership: the ship bumps, slides along the hull and slows, with a small shake and
+// a few soft sparks (neither with reduced motion). It is always pushed back out, so it can never get stuck.
+const shipSpheres = WORLD.collision.spheres.map(() => new THREE.Vector3()), fvN = new THREE.Vector3();
+function collide(dt) {
+  const pos = ship.root.position;
+  WORLD.collision.spheres.forEach((z, i) => shipSpheres[i].set(0, 0, z).applyQuaternion(flight.q).add(pos));
+  const hit = fleet.collideShip(shipSpheres, COL.radius);
+  // Moons are solid too.
+  for (const p of planets) for (const m of p.moons) {
+    const c = m.mesh.getWorldPosition(fv3).sub(universe.position), min = m.r * p.group.scale.x + ship.radius;
+    fv2.copy(pos).sub(c); const l = fv2.length(); if (l < min && l > 1e-6) pos.addScaledVector(fv2, (min - l) / l);
+  }
+  flight.sparkT -= dt; flight.touchT += dt;
+  if (!hit) return;
+  pos.add(hit.push);
+  const n = hit.normal, v = fv1.copy(shipFwd).multiplyScalar(flight.speed).addScaledVector(shipUp, flight.climb + flight.sink), vn = v.dot(n);
+  const sliding = v.length(), fresh = flight.touchT > 0.4;
+  flight.touchT = 0;
+  if (vn < 0) {
+    // Being pushed back out every frame turns the motion into a slide along the hull. Scraping slows the ship, more the
+    // more head-on it is (straight in, it stops; at a glancing angle it keeps most of its speed).
+    const into = Math.max(0, -shipFwd.dot(n)), intoUp = -shipUp.dot(n);
+    flight.speed *= Math.exp(-dt * COL.scrape * (0.2 + 1.2 * into));
+    if (intoUp * (flight.climb + flight.sink) > 0) { flight.climb *= Math.exp(-dt * 6); flight.sink = 0; }
+    // A fresh knock gives a soft bump back out and a small shake; staying pressed against the hull just slides.
+    if (fresh && vn < -2) { flight.push.addScaledVector(n, -vn * COL.bounce); flight.bump = Math.max(flight.bump, Math.min(1, -vn / 40)); flight.speed *= 1 - 0.6 * into; }
+  }
+  if (flight.push.dot(n) < 0) flight.push.addScaledVector(n, -flight.push.dot(n));
+  if (!reduced && flight.sparkT <= 0 && (sliding > 2 || vn < -1)) { flight.sparkT = 0.09; fleet.contactSparks(hit.point, n, Math.min(1, 0.15 + sliding / 60 - vn / 30)); }
+}
+// The player can fly anywhere the world has something to see, out to just past the mothership.
+function stayInWorld(pos) { const b = camReach() * 1.25; if (pos.length() > b) pos.setLength(b); }
 
 // The surface doesn't exist yet, so the ship is held at the bottom of the cloud layer: a soft spring that eases it back
 // up, with a hard floor well above the highest ground so it can never touch or pass through the planet.
@@ -909,7 +1033,7 @@ function holdAtDeck(dt) {
     // Reaching the deck starts the way down (checkDescent); until the clouds have closed in, the deck still holds the ship.
     const nd = Math.max(d + (L.deck - d) * (1 - Math.exp(-dt * 6)), L.surf + ship.radius + 6);
     ship.root.position.copy(p.group.position).addScaledVector(rel.normalize(), nd);
-    flight.climb *= Math.exp(-dt * 4);
+    flight.climb *= Math.exp(-dt * 4); flight.sink *= Math.exp(-dt * 4);
   }
 }
 // ---------- Down to the surface and back ----------
@@ -924,8 +1048,15 @@ function checkDescent() {
     if (d < L.deck + 3) { descent.phase = 'down'; descent.planet = p; descent.dir.copy(rel).normalize(); return; }
   }
 }
+// The heading is kept across the swap: measured against the planet's east and north where you went down, and the
+// surface's east (+x) and north (-z).
+const east = new THREE.Vector3(), north = new THREE.Vector3();
+function tangentBasis(up) { east.crossVectors(WORLD_UP, up); if (east.lengthSq() < 1e-6) east.set(1, 0, 0); east.normalize(); north.crossVectors(up, east); }
 function enterSurface(p) {
   descent.phase = null;
+  tangentBasis(descent.dir);
+  const h = Math.atan2(shipFwd.dot(east), shipFwd.dot(north));
+  setFrame(WORLD_UP, fv3.set(Math.sin(h), 0, -Math.cos(h))); flight.sink = 0; flight.push.set(0, 0, 0);
   surface.enter(p);
   world.visible = false; fleet.root.visible = false; fleet.fx.visible = false; sky.visible = false; airFX.hide();
   ship.root.position.copy(SURF_ORIGIN).y += ENTRY_ALT;
@@ -937,7 +1068,10 @@ function exitSurface() {
   surface.exit();
   world.visible = true; fleet.root.visible = true; fleet.fx.visible = true; sky.visible = true;
   ship.root.position.copy(p.group.position).addScaledVector(descent.dir, L.deck + 14);
-  flight.climb = Math.max(flight.climb, 6);
+  tangentBasis(descent.dir);
+  const h = Math.atan2(shipFwd.x, -shipFwd.z);
+  setFrame(descent.dir, fv3.copy(east).multiplyScalar(Math.sin(h)).addScaledVector(north, Math.cos(h))); camUp.copy(shipUp);
+  flight.climb = Math.max(flight.climb, 6); flight.sink = 0;
   noDescend = p; ship.setLandingGear(false);
   ship.clearTrail(); chase.ready = false;
   if (layerEl) layerEl.hidden = true;
@@ -978,14 +1112,17 @@ function cameraTargets(out) {
   out.copy(ship.root.position).y += view.mode === 'outside' || view.mode === 'leaving' ? 0.3 : -0.9;
   return out;
 }
+// The camera's up eases toward the ship's up (or the world's up for the fleet view), so it never snaps.
+function easeCamUp(want, dt) { camUp.lerp(want, reduced ? 1 : 1 - Math.exp(-dt * 5)).normalize(); camera.up.copy(camUp); }
 function follow(dt) {
-  if (fleetView()) { followFleet(dt); ship.setView(camera); return; }
+  if (fleetView()) { easeCamUp(WORLD_UP, dt); followFleet(dt); ship.setView(camera); return; }
   if (view.mode === 'free') {
     const f = a => held(FREE_KEYS, freeKeys, a), sp = free.speed * (f('fast') ? 3 : 1) * dt, cp = Math.cos(free.pitch);
     camDir.set(-Math.sin(free.yaw) * cp, Math.sin(free.pitch), -Math.cos(free.yaw) * cp);
     free.pos.addScaledVector(camDir, (f('fwd') - f('back')) * sp);
     free.pos.x += Math.cos(free.yaw) * (f('right') - f('left')) * sp; free.pos.z -= Math.sin(free.yaw) * (f('right') - f('left')) * sp;
     free.pos.y += (f('up') - f('down')) * sp;
+    camUp.copy(WORLD_UP); camera.up.copy(WORLD_UP);
     keepClear(free.pos, 0.5, true, false);                        // never below a planet's ground or inside the mothership's hull
     if (free.pos.length() > camReach()) free.pos.setLength(camReach());   // never lost in the void
     camera.position.copy(free.pos); camera.rotation.set(free.pitch, free.yaw, 0, 'YXZ');
@@ -1015,8 +1152,10 @@ function follow(dt) {
     pivot.copy(target);
     look = view.mode === 'outside' ? 1 : 0;
   }
-  const a = flight.yaw + chase.yaw, cp = Math.cos(chase.pitch);
-  desired.set(Math.sin(a) * cp, Math.sin(chase.pitch), Math.cos(a) * cp);
+  // The camera sits in the ship's own frame (behind, above, a little to the side), and its up follows the ship's up, so
+  // in a planet's gravity the horizon stays level on screen.
+  const cp = Math.cos(chase.pitch);
+  desired.set(Math.sin(chase.yaw) * cp, Math.sin(chase.pitch), Math.cos(chase.yaw) * cp).applyQuaternion(flight.q);
   if (view.mode !== 'outside') {
     // Keep the camera outside the ship's outline (measured in the ship's own frame), so it never clips into a wall.
     local.copy(desired).applyQuaternion(qShip.copy(ship.root.quaternion).invert());
@@ -1026,8 +1165,9 @@ function follow(dt) {
   desired.multiplyScalar(chase.dist).add(pivot);
   if (surface.active) { surfCam.copy(desired).sub(SURF_ORIGIN); desired.y = Math.max(desired.y, SURF_ORIGIN.y + surface.floorAt(surfCam.x, surfCam.z) + 4); }
   else keepClear(desired, 1.5);
-  if (!chase.ready || reduced) { camera.position.copy(desired); chase.ready = true; }
+  if (!chase.ready || reduced) { camera.position.copy(desired); camUp.copy(shipUp); chase.ready = true; }
   else camera.position.lerp(desired, 1 - Math.exp(-dt * (view.mode === 'outside' ? 5 + Math.abs(flight.speed) / 12 : 12)));
+  easeCamUp(shipUp, dt);
   camLookAt(tmpV.copy(pivot).addScaledVector(fwd, 1.5 * Math.cos(chase.yaw) * look));
   ship.setView(camera);
 }
@@ -1035,7 +1175,7 @@ function follow(dt) {
 let lifeT = 0, look = 1, thrustBoost = 0;
 function insideLife(dt) {
   flight.speed *= Math.exp(-dt * 3); if (Math.abs(flight.speed) < 0.05) flight.speed = 0;
-  flight.climb *= Math.exp(-dt * 3);
+  flight.climb *= Math.exp(-dt * 3); flight.sink *= Math.exp(-dt * 3);
   lifeT += dt;
   if (lifeT > 6 && !reduced && ship.atControls && !flight.speed) { lifeT = 0; if (Math.random() < 0.7) ship.crew.start(); }
 }
@@ -1051,10 +1191,9 @@ function shipOnScreen() {
 // "Show in space" from the console: the ship turns to face that planet (the autopilot waits until it has).
 function showPlanet(p) {
   leaveInside();
-  const d = p.group.position.clone().sub(ship.root.position);
-  flight.turnTo = Math.atan2(-d.x, -d.z);
+  flight.turnTo = p.group.position.clone().sub(ship.root.position).normalize();
   auto.active = false; auto.idle = 0; auto.state = 'pick';
-  if (reduced) { flight.yaw = flight.turnTo; flight.turnTo = null; }
+  if (reduced) { flight.q.premultiply(fq1.setFromAxisAngle(shipUp, headingTo(flight.turnTo))); frameVectors(); flight.turnTo = null; }
 }
 
 // A spot to start from: near a planet, about 70 degrees off the sun so its dark side shows.
@@ -1109,7 +1248,7 @@ function loadPlanets(first) {
       ship.root.position.copy(best.pos);
       const d = best.p.group.position.clone().sub(best.pos);
       ship.root.position.y = best.p.group.position.y; // level with it, so it sits ahead of the ship
-      flight.yaw = Math.atan2(-d.x, -d.z) + 0.22;
+      setHeading(Math.atan2(-d.x, -d.z) + 0.22);
     }
   }
   refreshShip(examples, first);
@@ -1169,6 +1308,56 @@ function toast(msg) { toastEl.textContent = msg; toastEl.hidden = false; clearTi
 addEventListener('pageshow', e => { if (e.persisted) loadPlanets(); });
 addEventListener('resize', resize);
 
+// ---------- Radio warnings near the mothership (instead of a shield) ----------
+// A calm, coast-guard style message that escalates as you come closer to the guardian ship's hull: shown once per level
+// (again if you leave and come back), with a soft chime. It never pushes the ship, never fires, and has no penalty.
+// Nothing is said while you're lined up in a hangar's approach lane. Lingering at the last level brings two fighters over
+// to keep you company at a polite distance, weapons stowed, until you move away. Reduced motion: no chime, no fighters.
+const WARN = WORLD.warnings;
+const RADIO = ['', 'Guardian vessel ahead. Please maintain a safe distance.', 'Warning: restricted airspace. Back up, this is a military vessel.', 'Final notice: please reverse course now.'];
+const cruiseEl = document.getElementById('cruiseLine'), radioEl = document.getElementById('radio'), radioText = document.getElementById('radioText');
+const warn = { level: 0, shown: 0, l3: 0, away: 0, escort: false, timer: 0 };
+function updateWarnings(dt) {
+  const th = [Infinity, WARN.level1, WARN.level2, WARN.level3].map(x => x * SHIP_LEN);
+  let lvl = 0;
+  if (fleet.present && !surface.active && Number.isFinite(flight.hullDist)) {
+    const d = flight.hullDist;
+    for (let i = 3; i >= 1; i--) if (d <= th[i]) { lvl = i; break; }
+    if (lvl < warn.level && d <= th[warn.level] * WARN.resetFactor) lvl = warn.level;   // a level holds until you're clearly past it
+    if (lvl && fleet.inApproachLane(ship.root.position, shipFwd)) lvl = 0;
+  }
+  if (lvl > warn.shown) showRadio(lvl);
+  warn.shown = lvl;
+  warn.level = lvl;
+  // Two fighters come over after a while at the last level, and leave once you've moved away.
+  warn.l3 = lvl === 3 ? warn.l3 + dt : Math.max(0, warn.l3 - dt * 0.5);
+  if (!warn.escort && warn.l3 > WARN.shadowAfter && !reduced) warn.escort = true;
+  warn.away = lvl <= 1 ? warn.away + dt : 0;
+  if (warn.escort && (warn.away > 2 || reduced || surface.active)) { warn.escort = false; warn.l3 = 0; }
+}
+function showRadio(lvl) {
+  if (!radioEl) return;
+  radioText.textContent = RADIO[lvl]; radioEl.dataset.level = lvl;
+  radioEl.hidden = false; radioEl.classList.remove('show'); void radioEl.offsetWidth; radioEl.classList.add('show');
+  clearTimeout(warn.timer); warn.timer = setTimeout(() => { radioEl.classList.remove('show'); setTimeout(() => { if (!radioEl.classList.contains('show')) radioEl.hidden = true; }, 700); }, WARN.showSeconds * 1000);
+  if (!reduced) chime(lvl);
+}
+// A soft two- or three-note chime, made on the spot (no sound files).
+let audioCtx = null;
+function chime(lvl) {
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const notes = lvl === 1 ? [659, 880] : lvl === 2 ? [587, 784, 587] : [523, 698, 880], t0 = audioCtx.currentTime + 0.02;
+    notes.forEach((f, i) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain(), t = t0 + i * 0.16;
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.05, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.5);
+      o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t + 0.55);
+    });
+  } catch (e) {}
+}
+
 // ---------- Planet portraits for the console ----------
 // Each planet is photographed once into a small picture, seen from the same sunny side as in the world.
 // It is drawn into a corner of the main canvas just before a normal frame, copied out, then drawn over.
@@ -1178,7 +1367,7 @@ thumbScene.background = new THREE.Color('#0B1228');
 thumbScene.add(new THREE.HemisphereLight('#3A4C8C', '#2A1C44', 0.2));
 const thumbSun = new THREE.DirectionalLight('#FFF1DC', 3.2);
 thumbSun.position.copy(SUN_DIR); thumbScene.add(thumbSun);
-const thumbCam = new THREE.PerspectiveCamera(30, THUMB_W / THUMB_H, 1, 60000);
+const thumbCam = new THREE.PerspectiveCamera(30, THUMB_W / THUMB_H, 1, 400000);
 const thumbCanvas = Object.assign(document.createElement('canvas'), { width: THUMB_W, height: THUMB_H });
 const thumbQueue = [], thumbUrls = new Map();
 function photograph(p) {
@@ -1223,7 +1412,13 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (dialogOpen()) keys.clear(); // no flying while the console is open
   fly(dt);
-  try { fleet.update(dt, { camera, reduced, calm: calmSpace }); } catch (e) { console.error(e); }   // a fleet hiccup must never stop the whole scene
+  updateWarnings(dt);
+  // Cruise: going faster than a boost, far from everything. It slows down by itself near anything.
+  if (cruiseEl) {
+    const on = flight.speed > BOOST_MAX * 1.02 && view.mode === 'outside', text = on ? `Cruise · ${Math.round(flight.speed / SHIP_LEN / 10) * 10} ship lengths a second` : '';
+    if (cruiseEl.textContent !== text) { cruiseEl.textContent = text; cruiseEl.hidden = !on; }
+  }
+  try { fleet.update(dt, { camera, reduced, calm: calmSpace, player: { pos: ship.root.position, q: flight.q, speed: Math.max(0, flight.speed) }, escort: warn.escort }); } catch (e) { console.error(e); }   // a fleet hiccup must never stop the whole scene
   follow(dt);
   if (surface.active) {
     surfOut = surface.update(dt, { shipLocal: surfLocal.copy(ship.root.position).sub(SURF_ORIGIN), camLocal: surfCam.copy(camera.position).sub(SURF_ORIGIN), reduced });
@@ -1242,6 +1437,11 @@ function frame() {
   // In the clouds: a soft shake and a faint shimmer (both zero with reduced motion), only for the follow camera.
   const fov = view.mode === 'outside' ? baseFov + air.fov : baseFov;
   if (view.mode === 'outside') camera.position.add(air.shake);
+  // A small shake when the ship bumps the hull (none with reduced motion).
+  if (flight.bump > 0.001) {
+    if (view.mode === 'outside' && !reduced) { const k = flight.bump * COL.shake, t = elapsed * 40; camera.position.addScaledVector(camUp, Math.sin(t) * k).addScaledVector(fv1.crossVectors(camUp, shipFwd), Math.sin(t * 1.3 + 1) * k); }
+    flight.bump *= Math.exp(-dt * 5);
+  }
   if (Math.abs(camera.fov - fov) > 1e-3) { camera.fov = fov; camera.updateProjectionMatrix(); }
   // Planets grow toward their size, glow brighter as you approach their air, and pulse for a moment when their goal changes.
   for (const p of planets) {
@@ -1252,8 +1452,9 @@ function frame() {
     // Clouds are seen from outside, or from underneath once the camera is inside them (never their far inner side through the gaps).
     const camD = camera.position.distanceTo(p.group.position), inside = camD < p.clouds.geometry.parameters.radius * p.group.scale.x;
     p.clouds.material.side = inside ? THREE.BackSide : THREE.FrontSide;
-    // The finest surface is built the first time the camera comes close.
-    if (!p.refined && camera.position.distanceTo(p.group.position) < p.look.radius * 4.5) { p.refined = true; p.refine(); }
+    // The finer surfaces are built the first time the camera comes close (one per frame at most).
+    if (p.refined === 0 && camD < p.look.radius * 4.5) { p.refined = 1; p.refine(); }
+    else if (p.refined === 1 && camD < p.look.radius * PW.finestWithin * 1.35) { p.refined = 2; p.refine2(); }
   }
   if (!reduced) {
     elapsed += dt;
@@ -1262,7 +1463,7 @@ function frame() {
   if (thumbQueue.length) photograph(thumbQueue.shift());
   wrapDust();
   // Floating origin: once the camera is 2,000 units from the render origin, move the origin to the camera.
-  if (camera.position.distanceTo(origin) > 2000) {
+  if (camera.position.distanceTo(origin) > WORLD.camera.rebase) {
     const delta = camera.position.clone().sub(origin);
     origin.copy(camera.position); universe.position.copy(origin).negate();
     ship.rebase(delta); rebases++;
