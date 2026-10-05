@@ -429,7 +429,7 @@ function applyAmount(v, oops) {
   else { c.amount = Math.max(0, c.amount - v); msg = `Took ${fmt(v)} off. ${fmt(Math.max(0, c.target - c.amount))} left this month.`; }
   padReturn = `${mode}-${ps.id}`;
   commit(msg); closePad();
-  if (c.type === 'goal' && mode !== 'monthly') tell('stash:show', { id: c.id }); // so it's in view when the console closes
+  // The camera and the ship are never moved for you after a change: only the "Show in space" button does that.
 }
 
 function finishFlow(flow, d) {
@@ -444,7 +444,6 @@ function finishFlow(flow, d) {
   commit(msg);
   if (item.type === 'goal') {
     msg = `Say hello to ${mythOf(item.id)}, your planet for ${name}.`;
-    tell('stash:show', { id: item.id });
     if (flow === 'setup') { pad.close(); ps = null; close(); hello(`Meet ${mythOf(item.id)}, your planet for ${name}. Open the Console anytime to add money.`); return; }
     note(msg);
   }
@@ -468,7 +467,7 @@ dlg.addEventListener('click', e => {
   if (a === 'close') close();
   else if (a === 'new') { padReturn = b.dataset.k; openFlow(b.dataset.what); }
   else if (a === 'amount') { padReturn = b.dataset.k; openAmount(b.dataset.mode, id); }
-  else if (a === 'show') { close(); tell('stash:show', { id }); }
+  else if (a === 'show') { close(); tell('stash:show', { id, user: true }); }   // only ever from this button
   else if (a === 'extra') { S.extra = Math.max(0, (+S.extra || 0) + +b.dataset.d); commit(); render(); }
   else if (a === 'reset') { const c = find(id); c.amount = 0; commit(`Fresh start! ${c.name} is back to ${fmt(c.target)}.`); render(); }
   else if (a === 'sample') useSample();

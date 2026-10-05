@@ -583,6 +583,21 @@ const PITCH_REST = 0.3, YAW_REST = 0.7, FAR = 26;
 const ENTER_AT = SHIP_LEN * 1.0, EXIT_AT = SHIP_LEN * 1.8;
 const IN_DIST = 15, IN_YAW = 1.45, IN_PITCH = 0.12, GLIDE = 1.4;   // where the camera settles inside, and how long the glide takes
 const view = { mode: 'outside', t: 0, from: null, to: null };
+// ---------- The one camera controller ----------
+// Modes: outside (follow the ship), entering / inside / leaving (the cutaway), free, toFleet / fleet (the mothership view).
+// The mode only ever changes here, and only because you pressed a button or key, scrolled, or a glide you started has
+// finished. No game event (money changes, new fighters, the mothership relocating, the fund changing) ever moves the
+// camera. With ?debug=1 in the address, every change is listed in a small log in the corner.
+const camDebug = new URLSearchParams(location.search).get('debug') === '1';
+const camLogEl = camDebug ? Object.assign(document.createElement('div'), { className: 'cam-log', role: 'log', ariaLabel: 'Camera mode changes' }) : null;
+if (camLogEl) { camLogEl.innerHTML = '<b>Camera log</b>'; document.body.appendChild(camLogEl); }
+const camT0 = performance.now();
+function setViewMode(mode, why) {
+  if (view.mode === mode) return;
+  const line = `${((performance.now() - camT0) / 1000).toFixed(1)}s  ${view.mode} → ${mode}  (${why})`;
+  view.mode = mode;
+  if (camLogEl) { const row = document.createElement('div'); row.textContent = line; camLogEl.appendChild(row); while (camLogEl.children.length > 13) camLogEl.children[1].remove(); console.info('[camera]', line); }
+}
 const chase = { dist: FAR, tDist: FAR, yaw: YAW_REST, pitch: PITCH_REST, dragging: false, ready: false };
 const fwd = new THREE.Vector3(), tmpV = new THREE.Vector3(), pivot = new THREE.Vector3(), desired = new THREE.Vector3(), head = new THREE.Vector3();
 const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
@@ -610,16 +625,17 @@ addEventListener('keydown', e => {
   if (e.ctrlKey) e.preventDefault();
   if (/^(BUTTON|A)$/.test(e.target?.tagName) && (FLIGHT_KEYS[e.code] || FREE_KEYS[e.code])) e.target.blur(); // never "click" a focused HUD button
   hideHint();
-  if (e.code === 'KeyF' && !e.ctrlKey) { if (!e.repeat) toggleFree(); e.preventDefault(); return; }
-  if (e.code === 'Escape' && view.mode === 'free') { leaveFree(); e.preventDefault(); return; }
-  if (e.code === 'Escape' && fleetView()) { leaveFleet(); e.preventDefault(); return; }
+  if (e.code === 'KeyF' && !e.ctrlKey) { if (!e.repeat) toggleFree('key: F'); e.preventDefault(); return; }
+  if (e.code === 'Escape' && view.mode === 'free') { leaveFree('key: Esc'); e.preventDefault(); return; }
+  if (e.code === 'Escape' && fleetView()) { leaveFleet('key: Esc'); e.preventDefault(); return; }
+  if (fleetView()) { if (FLIGHT_KEYS[e.code]) e.preventDefault(); return; }   // the mothership view stays put: no flying, no leaving
   // DEBUG (temporary): L extends and retracts the landing gear, until landing on planets is built (it will call ship.setLandingGear).
   if (e.code === 'KeyL' && !e.ctrlKey) { if (!e.repeat) ship.setLandingGear(!ship.landingGear); return; }
   // X: skip straight back up to space from a planet's surface (or from the clouds on the way down).
   if (e.code === 'KeyX' && !e.ctrlKey && (surface.active || descent.phase)) { if (!e.repeat) skipToSpace(); e.preventDefault(); return; }
   if (view.mode === 'free') { if (FREE_KEYS[e.code]) { freeKeys.add(e.code); e.preventDefault(); } return; }
   if (!FLIGHT_KEYS[e.code]) return;
-  if (view.mode !== 'outside') leaveInside();   // flying starts once the camera is back outside
+  if (view.mode !== 'outside') leaveInside(FAR, 'key: ' + e.code);   // flying starts once the camera is back outside
   keys.add(e.code); flight.turnTo = null; e.preventDefault();
 });
 addEventListener('keyup', e => { if (e.key === 'Meta') keys.clear(); keys.delete(e.code); freeKeys.delete(e.code); });
@@ -641,10 +657,10 @@ function setZoom(d) {
   if (view.mode === 'entering' || view.mode === 'leaving' || view.mode === 'free') return;   // the glide owns the camera; extra scrolling can't flip it
   if (view.mode === 'outside') {
     chase.tDist = clamp(d, ENTER_AT, 70);
-    if (d < ENTER_AT) enterInside();
+    if (d < ENTER_AT) enterInside('scroll in');
   } else {
     chase.tDist = clamp(d, 1, EXIT_AT + 1);
-    if (d > EXIT_AT) leaveInside(Math.min(70, d));
+    if (d > EXIT_AT) leaveInside(Math.min(70, d), 'scroll out');
   }
 }
 const zoom = f => setZoom((fleetView() ? fleetCam.dist : chase.tDist) * f);
@@ -666,31 +682,31 @@ function glide(to, dur = GLIDE) {
   view.to = to; view.t = 0; view.dur = dur;
   chase.dragging = false;
 }
-function enterInside() {
+function enterInside(why = 'button: Look closer') {
   if (view.mode === 'inside' || view.mode === 'entering') return;
-  view.mode = 'entering'; ship.setOpen(true);
+  setViewMode('entering', why); ship.setOpen(true);
   keys.clear(); auto.active = false; auto.idle = 0; flight.turnTo = null;
   glide({ dist: IN_DIST, yaw: wrapAngle(IN_YAW), pitch: IN_PITCH });
   chase.tDist = IN_DIST; updateLookBtn();
 }
-function leaveInside(dist = FAR) {
-  if (fleetView()) { leaveFleet(); return; }
+function leaveInside(dist = FAR, why = 'button: Back outside') {
+  if (fleetView()) return;   // the mothership view only ends with "Back to ship" (or Esc)
   if (view.mode === 'outside' || view.mode === 'leaving') return;
-  view.mode = 'leaving'; view.closeLate = false; ship.setOpen(false);
+  setViewMode('leaving', why); view.closeLate = false; ship.setOpen(false);
   const d = clamp(dist, ENTER_AT + 2, 70);
   glide({ dist: d, yaw: YAW_REST, pitch: PITCH_REST });
   chase.tDist = d; updateLookBtn();
 }
-lookBtn.addEventListener('click', () => (view.mode === 'inside' || view.mode === 'entering' || fleetView()) ? leaveInside() : enterInside());
-freeBtn.addEventListener('click', () => toggleFree());
+lookBtn.addEventListener('click', () => fleetView() ? leaveFleet('button: Back to ship') : (view.mode === 'inside' || view.mode === 'entering') ? leaveInside() : enterInside());
+freeBtn.addEventListener('click', () => toggleFree(view.mode === 'free' ? 'button: Back to ship' : 'button: Free camera'));
 
 // ---------- Free camera: detach from the ship and fly the camera anywhere, through the open hull into every room ----------
 const free = { pos: new THREE.Vector3(), yaw: 0, pitch: 0, speed: 5, side: 1 };
 const camDir = new THREE.Vector3(), camLocal = new THREE.Vector3(), qInv = new THREE.Quaternion();
-function toggleFree() { if (surface.active) return; if (fleetView()) return leaveFleet(); view.mode === 'free' ? leaveFree() : enterFree(); }
-function enterFree() {
+function toggleFree(why) { if (surface.active || fleetView()) return; view.mode === 'free' ? leaveFree(why) : enterFree(why); }
+function enterFree(why = 'button: Free camera') {
   if (view.mode === 'free') return;
-  view.mode = 'free'; view.closeLate = false;
+  setViewMode('free', why); view.closeLate = false;
   keys.clear(); freeKeys.clear(); auto.active = false; auto.idle = 0; flight.turnTo = null;
   // Cut the hull on the side the camera is on now, and keep that cut fixed, so flying inside never flips it.
   camLocal.copy(camera.position).sub(ship.root.position).applyQuaternion(qInv.copy(ship.root.quaternion).invert());
@@ -699,7 +715,7 @@ function enterFree() {
   camera.getWorldDirection(camDir); free.yaw = Math.atan2(-camDir.x, -camDir.z); free.pitch = Math.asin(clamp(camDir.y, -1, 1));
   chase.dragging = false; updateLookBtn();
 }
-function leaveFree() {
+function leaveFree(why = 'button: Back to ship') {
   if (view.mode !== 'free') return;
   // Turn wherever the camera is into follow-camera terms, then glide back out; the hull closes once the camera is clear.
   cameraTargets(pivot);
@@ -707,7 +723,7 @@ function leaveFree() {
   off.applyQuaternion(qInv.copy(flight.q).invert());   // into the ship's own frame
   chase.dist = d; chase.pitch = Math.asin(clamp(off.y / d, -1, 1)); chase.yaw = Math.atan2(off.x, off.z);
   freeKeys.clear();
-  view.mode = 'leaving'; view.closeLate = true;
+  setViewMode('leaving', why); view.closeLate = true;
   glide({ dist: clamp(Math.max(FAR, d), ENTER_AT + 2, 70), yaw: YAW_REST, pitch: PITCH_REST });
   chase.tDist = view.to.dist; updateLookBtn();
 }
@@ -715,29 +731,30 @@ function leaveFree() {
 // focus is the point it circles, in the mothership's own space (its middle unless set).
 const fleetCam = { yaw: 0, pitch: 0.3, dist: 80, t: 0, from: new THREE.Vector3(), fromLook: new THREE.Vector3(), look: new THREE.Vector3(), focus: new THREE.Vector3(), close: false };
 const fleetView = () => view.mode === 'toFleet' || view.mode === 'fleet';
-function enterFleet() {
+function enterFleet(why = 'button: Show the fleet') {
   if (!fleet.present || fleetView() || surface.active) return;
   if (view.mode !== 'outside') { ship.setOpen(false); ship.setCutSide(null); }
   keys.clear(); freeKeys.clear(); auto.active = false; auto.idle = 0; flight.turnTo = null; chase.dragging = false;
   fleetCam.from.copy(camera.position); camera.getWorldDirection(camDir); fleetCam.fromLook.copy(camera.position).addScaledVector(camDir, 30);
   // A three-quarter view of the open hangar side, from a little above and in front.
   fleetCam.yaw = Math.atan2(-0.85, -0.55) + fleet.yaw; fleetCam.pitch = 0.32; fleetCam.dist = fleet.size.L * 1.15; fleetCam.t = 0;
-  view.mode = 'toFleet'; updateLookBtn();
+  setViewMode('toFleet', why); updateLookBtn();
 }
-function leaveFleet() {
+function leaveFleet(why = 'button: Back to ship') {
   if (!fleetView()) return;
   // Glide back to the ship from wherever the camera is, like leaving the free camera.
   pivot.copy(fleetCam.look);
   const off = camera.position.clone().sub(pivot), d = Math.max(1, off.length());
   off.applyQuaternion(qInv.copy(flight.q).invert());   // into the ship's own frame
   chase.dist = d; chase.pitch = Math.asin(clamp(off.y / d, -1, 1)); chase.yaw = Math.atan2(off.x, off.z);
-  view.mode = 'leaving'; view.closeLate = false;
+  setViewMode('leaving', why); view.closeLate = false;
   glide({ dist: FAR, yaw: YAW_REST, pitch: PITCH_REST }, reduced ? GLIDE : 2.6);
   chase.tDist = FAR; updateLookBtn();
 }
 const fleetDir = new THREE.Vector3(), fleetPos = new THREE.Vector3(), fleetC = new THREE.Vector3();
 function followFleet(dt) {
-  if (!fleet.present) { leaveFleet(); return; }
+  // If the fleet goes away (the fund was emptied) the camera simply holds still until you press "Back to ship".
+  if (!fleet.present) { camLookAt(fleetCam.look); return; }
   const c = fleet.toWorld(fleetCam.focus, fleetC), cp = Math.cos(fleetCam.pitch);
   fleetDir.set(Math.sin(fleetCam.yaw) * cp, Math.sin(fleetCam.pitch), Math.cos(fleetCam.yaw) * cp);
   fleetPos.copy(c).addScaledVector(fleetDir, fleetCam.dist);
@@ -747,7 +764,7 @@ function followFleet(dt) {
     const e = fleetCam.t * fleetCam.t * (3 - 2 * fleetCam.t);
     camera.position.lerpVectors(fleetCam.from, fleetPos, e);
     fleetCam.look.lerpVectors(fleetCam.fromLook, c, e);
-    if (fleetCam.t >= 1) { view.mode = 'fleet'; updateLookBtn(); }
+    if (fleetCam.t >= 1) { setViewMode('fleet', 'glide finished'); updateLookBtn(); }
   } else {
     camera.position.lerp(fleetPos, reduced ? 1 : 1 - Math.exp(-dt * 4));
     fleetCam.look.lerp(c, reduced ? 1 : 1 - Math.exp(-dt * 4));
@@ -1142,7 +1159,7 @@ function follow(dt) {
     pivot.copy(f.pivot).lerp(target, e);
     look = view.mode === 'entering' ? 1 - e : e;   // the outside view looks a little ahead of the ship; inside looks at its centre
     if (view.closeLate && view.t > 0.5 && ship.openTarget) ship.setOpen(false);   // leaving the free camera: close once clear of the hull
-    if (view.t >= 1) { if (view.mode === 'leaving') ship.setCutSide(null); view.mode = view.mode === 'entering' ? 'inside' : 'outside'; chase.tDist = chase.dist; updateLookBtn(); }
+    if (view.t >= 1) { if (view.mode === 'leaving') ship.setCutSide(null); setViewMode(view.mode === 'entering' ? 'inside' : 'outside', 'glide finished'); chase.tDist = chase.dist; updateLookBtn(); }
   } else {
     if (view.mode === 'outside' && !chase.dragging) {
       const k = reduced ? 1 : 1 - Math.exp(-dt * 2.2);
@@ -1190,7 +1207,7 @@ function shipOnScreen() {
 
 // "Show in space" from the console: the ship turns to face that planet (the autopilot waits until it has).
 function showPlanet(p) {
-  leaveInside();
+  leaveInside(FAR, 'button: Show in space (console)');
   flight.turnTo = p.group.position.clone().sub(ship.root.position).normalize();
   auto.active = false; auto.idle = 0; auto.state = 'pick';
   if (reduced) { flight.q.premultiply(fq1.setFromAxisAngle(shipUp, headingTo(flight.turnTo))); frameVectors(); flight.turnTo = null; }
@@ -1279,9 +1296,10 @@ addEventListener('storage', e => { if (e.key === KEY || e.key === NAMES_KEY) loa
 addEventListener('stash:change', () => loadPlanets());
 addEventListener('stash:thumbs', () => { for (const p of planets) if (!thumbQueue.includes(p)) thumbQueue.push(p); });
 addEventListener('stash:show', e => {
-  const p = planets.find(q => q.id === e.detail?.id);
+  if (!e.detail?.user) return;   // only the console's "Show in space" button may move the camera
+  const p = planets.find(q => q.id === e.detail.id);
   if (p) showPlanet(p);
-  else if (goalsOf(load()).some(g => g.id === e.detail?.id && isEmergencyFund(g))) enterFleet();   // the fund is the fleet
+  else if (goalsOf(load()).some(g => g.id === e.detail.id && isEmergencyFund(g))) enterFleet('button: Show in space (console)');   // the fund is the fleet
 });
 
 // ---------- The fleet's HUD: a shield button with a plain-English line, and a button that shows the fleet ----------
@@ -1299,7 +1317,7 @@ function updateFleetHud() {
   fleetBtn.classList.toggle('on', !!f.tier);
 }
 fleetBtn.addEventListener('click', () => { const open = !fleetHud.classList.contains('open'); fleetHud.classList.toggle('open', open); fleetBtn.setAttribute('aria-expanded', open); });
-fleetGo.addEventListener('click', () => { fleetView() ? leaveFleet() : enterFleet(); fleetHud.classList.remove('open'); fleetBtn.setAttribute('aria-expanded', false); });
+fleetGo.addEventListener('click', () => { fleetView() ? leaveFleet('button: Back to ship') : enterFleet('button: Show the fleet'); fleetHud.classList.remove('open'); fleetBtn.setAttribute('aria-expanded', false); });
 addEventListener('pointerdown', e => { if (!fleetHud.contains(e.target)) { fleetHud.classList.remove('open'); fleetBtn.setAttribute('aria-expanded', false); } });
 // A short message near the top, for things like "New fighter added".
 const toastEl = document.getElementById('toast');
