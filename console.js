@@ -269,7 +269,9 @@ function vShip() {
       <p class="note">Keys are ignored while the console is open or you're typing.</p>
       <label class="field" for="fighterUnit"><span>Dollars per fighter</span></label>
       <input id="fighterUnit" type="number" inputmode="numeric" min="1" step="1" data-f="ship-fighter" data-k="ship-fighter" value="${S.ship.fighterUnit || 100}">
-      <p class="note">Your emergency fund's guardian ship gets one fighter for every this many dollars saved.</p></div>
+      <p class="note">Your emergency fund's guardian ship gets one fighter for every this many dollars saved.</p>
+      <label class="toggle" for="calmSpace"><input type="checkbox" id="calmSpace" data-f="ship-calm" data-k="ship-calm" ${S.ship.calmSpace ? 'checked' : ''}>
+        <span><b>Calm space</b><small>The guardian ship's guns rest and skip their practice drills, and its fighters take off gently. Always on if your device asks for less motion.</small></span></label></div>
     <div class="panelbox"><h4>Your data stays here</h4>
       <p class="note">No account and no bank connection. Everything is saved in this browser, on this computer only.</p>
       <p style="margin:14px 0 0">${isEmpty(S)
@@ -485,6 +487,7 @@ panel.addEventListener('change', e => {
   if (f === 'ship-name') S.ship.name = i.value.trim();
   else if (f === 'ship-pilot') S.ship.pilot = i.value.trim();
   else if (f === 'ship-tow') S.ship.towPod = i.checked;
+  else if (f === 'ship-calm') S.ship.calmSpace = i.checked;
   else if (f === 'ship-fighter') S.ship.fighterUnit = Math.max(1, Math.round(parseFloat(i.value) || 100));
   else {
     const v = Math.max(0, parseFloat(i.value) || 0);

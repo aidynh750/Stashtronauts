@@ -241,24 +241,19 @@ const seeded = seed => { let s = seed; return () => hashN(s++ * 7919 + 13); };
 function buildMothership(key) {
   // Small ships get a chunkier body, so the fighter-sized bay still fits inside the hull's outline.
   const t = TIERS[key], L = t.L, W = Math.max(L * 0.17, 17), H = Math.max(L * 0.075, 11), k = L / 60, tx = textures(), rnd = seeded(t.seed);
-  const HD = 10, HH = 6, FD = HD + 3, slots = t.slots;
+
   const mats = shipMaterials(tx, key);
-  const B = batch(), Bd = batch(), Bb = batch(), put = B.put, putD = Bd.put, putB = Bb.put;
+  const B = batch(), Bd = batch(), put = B.put, putD = Bd.put;
   const root = new THREE.Group(); root.name = 'mothership-' + key;
-  const core = new THREE.Group(), detail = new THREE.Group(), bayGroup = new THREE.Group();
-  root.add(core, detail, bayGroup);
+  const core = new THREE.Group(), detail = new THREE.Group();
+  root.add(core, detail);
   // Solid volumes in ship space, used to keep fighters, the player's ship and cameras out of the hull.
   const boxes = [], solid = (x0, y0, z0, x1, y1, z1) => boxes.push([Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1), Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1)]);
   const lift = Math.max(0.05, L * 0.00025);     // markings sit this far off the armour
 
   // ----- Layout. The main deck is the widest; decks above step back; a keel runs below; wings of armour on both sides. -----
   const zn = -0.3 * L, zt = 0.4 * L, eLen = 0.05 * L;
-  const deckY = -0.36 * H, ceilY = deckY + HH, xo = -W / 2 - FD, xi = xo + HD;
-  const HL = 1 + slots * SP + PAD + ASM + 1, hz = -0.05 * L, zs = hz - HL / 2, ze = hz + HL / 2;
-  const D = { key, L, W, H, HD, HH, HL, hz, zs, ze, xo, xi, deckY, ceilY, k, slots, boxes,
-    slotX: xo + HD * 0.5 + 0.3, slotY: deckY, slotZ: i => zs + 1 + (i + 0.5) * SP, padZ: zs + 1 + slots * SP + PAD / 2,
-    zp: ze - 1 - ASM, zA: ze - 1 - ASM / 2, radius: L * 0.56 };
-  D.bayCenter = new THREE.Vector3(xo + HD / 2, deckY + HH / 2, hz);
+  const D = { key, L, W, H, k, boxes, radius: L * 0.56, bays: [], slots: 0, slotRefs: [] };
 
   // Main deck: a long pointed prow, then armoured segments with dark ribs and green bands.
   put('black', octLoft([{ z: -L / 2, w: W * 0.04, h: H * 0.12, y: -H * 0.15 }, { z: -0.42 * L, w: W * 0.4, h: H * 0.55, y: -H * 0.1 }, { z: zn, w: W, h: H }]));
@@ -292,7 +287,9 @@ function buildMothership(key) {
     solid(x - span / 2, y - H * 0.07, z0, x + span / 2, y + H * 0.07, z1);
     return x + s * span / 2;
   };
+  const nb = boxes.length;
   const tipL = wing(-1, -0.16 * L, 0.24 * L, H * 0.24, W * 0.34), tipR = wing(1, -0.22 * L, 0.34 * L, H * 0.18, W * 0.42);
+  const wingBoxes = boxes.slice(nb);
 
   // ----- The engine array: a block across the stern with many big engines in a grid. -----
   put('black', octLoft([{ z: zt - 0.01 * L, w: W * 0.98, h: H * 1.8, y: H * 0.15 }, { z: L / 2, w: W * 0.9, h: H * 1.65, y: H * 0.15 }]));
@@ -363,22 +360,6 @@ function buildMothership(key) {
   }
   for (const p of spires) solid(p[0] - 1, H * 0.4, p[2] - 1, p[0] + 1, p[1], p[2] + 1);
 
-  // ----- Docking arms on the right side and underneath: long trusses with clamp rings. -----
-  for (let i = 0; i < t.arms; i++) {
-    const down = i % 3 === 2, z = -0.18 * L + (i / Math.max(1, t.arms - 1)) * 0.5 * L, len = W * (0.18 + rnd() * 0.08), th = L * 0.006;
-    if (down) {
-      put('steel', at(boxG(th, len, th), 0, -H * 0.82 - len / 2, z));
-      for (let j = 1; j < 5; j++) put('dark', at(boxG(th * 3, th * 0.5, th * 0.5), 0, -H * 0.82 - len * j / 5, z));
-      put('plain', at(new THREE.TorusGeometry(th * 4, th * 0.9, 6, 16), 0, -H * 0.82 - len, z, Math.PI / 2));
-      solid(-th * 5, -H * 0.82 - len - th * 5, z - th * 5, th * 5, -H * 0.82, z + th * 5);
-    } else {
-      const y = -H * 0.18, x0 = W / 2;
-      put('steel', at(boxG(len, th, th), x0 + len / 2, y, z)); put('steel', at(boxG(len, th, th), x0 + len / 2, y + th * 3, z));
-      for (let j = 0; j <= 5; j++) put('dark', at(boxG(th * 0.5, th * 3, th * 0.5), x0 + len * j / 5, y + th * 1.5, z));
-      put('plain', at(new THREE.TorusGeometry(th * 4, th * 0.9, 6, 16), x0 + len, y + th * 1.5, z, 0, Math.PI / 2));
-      solid(x0, y - th * 5, z - th * 5, x0 + len + th * 5, y + th * 6, z + th * 5);
-    }
-  }
   // ----- Cargo gantries along the upper deck, with containers under them. -----
   for (let i = 0; i < Math.round(3 + L / 300); i++) {
     const z = -0.1 * L + i * 0.045 * L, span = W * 0.5, ph = H * 0.12, th = L * 0.003;
@@ -388,79 +369,189 @@ function buildMothership(key) {
     for (let c = 0; c < 3; c++) if (rnd() < 0.7) put(['green', 'steel', 'dark'][Math.floor(rnd() * 3)], at(boxG(span * 0.18, ph * 0.3, 0.02 * L), (c - 1) * span * 0.28, H * 0.97 + ph * 0.15, z + 0.012 * L));
   }
 
-  // ----- The hangar: a bay recessed into the left flank, human- and fighter-sized, with its own block around it. -----
-  const fx1 = -W / 2 + 2, fy0 = deckY - 4, fy1 = ceilY + 4, fz0 = zs - 6, fz1 = ze + 6;
-  const block = (x0, y0, z0, x1, y1, z1, m = 'dark') => { put(m, at(boxG(x1 - x0, y1 - y0, z1 - z0), (x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2)); solid(x0, y0, z0, x1, y1, z1); };
-  block(xo, fy0, fz0, fx1, deckY, fz1, 'plain'); block(xo, ceilY, fz0, fx1, fy1, fz1, 'plain');
-  block(xo, deckY, fz0, fx1, ceilY, zs); block(xo, deckY, ze, fx1, ceilY, fz1); block(xi, deckY, zs, fx1, ceilY, ze);
-  put('bayGlow', at(new THREE.PlaneGeometry(HL, HH * 0.9), xi - 0.5, deckY + HH / 2, hz, 0, -Math.PI / 2));    // lit opening, seen from far
-  const hmid = xo + HD / 2;
-  putB('green', at(boxG(0.4, 0.35, HL), xo + 0.2, deckY - 0.05, hz));
-  putB('green', at(boxG(0.4, 0.35, HL), xo + 0.2, ceilY + 0.05, hz));
-  putB('interior', at(boxG(0.4, HH, HL), xi - 0.2, deckY + HH / 2, hz));
+  // ----- Hangar bays: many, all over the hull. -----
+  // Every bay is built once in its own frame: the mouth at x = 0 (out is -x), the bay going in toward +x, its floor at
+  // y = 0, and parking spots side by side along z. Then it's placed on the hull and turned to face out (theta about y):
+  // left flank, right flank (turned round), upper decks, under the keel, and a flight deck at the rear facing aft.
+  // A bay is only built if its open mouth and its launch lane are clear of everything solid, and its block doesn't cut
+  // into another bay or the wings, so no fighter ever flies through the hull.
+  const BH = 7, BD = 12, BF = BD + 3;       // bay height, depth, and how far its block stands out from the hull
+  const keepOut = [], bays = D.bays, YAX = new THREE.Vector3(0, 1, 0), ONE3 = new THREE.Vector3(1, 1, 1);
+  const tb = (M, b) => { const a = new THREE.Vector3(b[0], b[1], b[2]).applyMatrix4(M), c = new THREE.Vector3(b[3], b[4], b[5]).applyMatrix4(M); return [Math.min(a.x, c.x), Math.min(a.y, c.y), Math.min(a.z, c.z), Math.max(a.x, c.x), Math.max(a.y, c.y), Math.max(a.z, c.z)]; };
+  const overlap = (a, b, pad = 0) => a[0] < b[3] + pad && a[3] > b[0] - pad && a[1] < b[4] + pad && a[4] > b[1] - pad && a[2] < b[5] + pad && a[5] > b[2] - pad;
   const chevrons = (p, len, h, x, y, zc, ry) => { const n = Math.max(1, Math.round(len / (h * 8))), w = len / n; for (let i = 0; i < n; i++) p('decal', at(decalG(w, h, DECAL.chevron), x, y, zc - len / 2 + w * (i + 0.5), 0, ry)); };
-  chevrons(putB, HL - 1.2, 0.5, xo - 0.02, deckY - 0.45, hz, -Math.PI / 2);
-  chevrons(putB, HL - 1.2, 0.5, xo - 0.02, ceilY + 0.45, hz, -Math.PI / 2);
-  for (let i = 0; i < slots; i++) {
-    const z = D.slotZ(i), dg = new THREE.PlaneGeometry(HD - 0.4, SP), uv = dg.attributes.uv;
-    for (let j = 0; j < uv.count; j++) uv.setXY(j, uv.getY(j), uv.getX(j));
-    putB('deck', at(dg, hmid + 0.2, deckY + 0.01, z, -Math.PI / 2));
-    putB('decal', at(decalG(1.1, 0.95, DECAL.bay(i)), xo + 1.1, deckY + 0.03, z, -Math.PI / 2));
-    putB('steel', at(boxG(HD * 0.92, 0.22, 0.22), hmid, ceilY - 0.3, z));
-    putB('dark', at(boxG(0.5, 0.25, 0.4), D.slotX + 0.35, ceilY - 0.5, z));
-    putB('lamp', at(boxG(HD * 0.7, 0.06, 0.22), hmid, ceilY - 0.05, z + SP / 2));
-    if (i % 2 === 0) for (let r = 0; r < 3; r++) { putB('fuel', at(cylG(0.2, 0.2, 2.6, 10), xi - 0.55, deckY + 0.3 + r * 0.46, z, Math.PI / 2)); putB('dark', at(cylG(0.21, 0.21, 0.12, 10), xi - 0.55, deckY + 0.3 + r * 0.46, z + 1.3, Math.PI / 2)); }
-    else for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) putB(c % 3 ? 'steel' : 'green', at(boxG(0.55, 0.42, 0.6), xi - 0.5, deckY + 0.22 + r * 0.46, z - 1.1 + c * 0.72));
-    putB('rack', at(new THREE.PlaneGeometry(SP - 0.4, HH * 0.4), xi - 0.41, deckY + HH * 0.78, z, 0, -Math.PI / 2));
-    putB('steel', at(boxG(0.1, HH * 0.55, 0.1), xi - 1.0, deckY + HH * 0.275, z + SP / 2));
-  }
-  const catY = deckY + HH * 0.55, catLen = HL - 2;
-  putB('steel', at(boxG(1.1, 0.1, catLen), xi - 0.75, catY, hz));
-  putB('steel', at(boxG(0.05, 0.05, catLen), xi - 1.27, catY + 0.5, hz));
-  for (let z = zs + 1.5; z < ze - 1; z += 2) putB('steel', at(boxG(0.05, 0.5, 0.05), xi - 1.27, catY + 0.25, z));
-  putB('steel', at(boxG(0.9, 0.08, HH * 0.75), xi - 0.75, deckY + HH * 0.28, zs + 1.4 + HH * 0.3, Math.atan2(HH * 0.55, HH * 0.6)));
-  putB('dark', at(boxG(0.1, 1.0, 0.6), xi - 0.42, deckY + 0.5, D.padZ + 1.6));
-  putB('lampG', at(boxG(0.06, 0.06, 0.7), xi - 0.45, deckY + 1.05, D.padZ + 1.6));
-  const DW = 3.8, DH = Math.min(2.6, HH - 0.6), dx = D.slotX;
-  putB('black', at(boxG(dx - DW / 2 - xo, HH, 0.4), (xo + dx - DW / 2) / 2, deckY + HH / 2, D.zp));
-  putB('black', at(boxG(xi - (dx + DW / 2), HH, 0.4), (xi + dx + DW / 2) / 2, deckY + HH / 2, D.zp));
-  putB('black', at(boxG(DW, HH - DH, 0.4), dx, deckY + DH + (HH - DH) / 2, D.zp));
-  chevrons(putB, DW, 0.3, dx, deckY + DH + 0.2, D.zp - 0.21, Math.PI);
-  putB('black', at(boxG(0.5, HH, ASM), xo + 0.25, deckY + HH / 2, D.zA));
-  putB('decal', at(decalG(ASM * 0.8, ASM * 0.1, DECAL.caution), xo - 0.02, deckY + HH * 0.5, D.zA, 0, -Math.PI / 2));
-  putB('deck', at(new THREE.PlaneGeometry(HD - 0.6, ASM), hmid + 0.2, deckY + 0.01, D.zA, -Math.PI / 2));
-  for (const s of [-1, 1]) putB('steel', at(boxG(0.25, HH - 0.3, 0.25), dx + s * 2.2, deckY + (HH - 0.3) / 2, D.zA));
-  putB('steel', at(boxG(4.6, 0.25, 0.25), dx, deckY + HH - 0.4, D.zA));
-  putB('lamp', at(boxG(3, 0.05, 0.3), dx, ceilY - 0.06, D.zA));
-  putB('decal', at(decalG(HH * 0.6, HH * 0.6, DECAL.badge), hmid, deckY + HH * 0.5, fz0 - 0.03, 0, Math.PI));
-  // Guide beacons on booms at both ends of the mouth.
   const beacons = [];
-  for (const z of [zs - 1, ze + 1]) for (const y of [deckY - 0.2, ceilY + 0.3]) {
-    putB('steel', at(boxG(6, 0.3, 0.3), xo - 3, y, z)); putB('dark', at(boxG(0.5, 0.5, 0.5), xo - 6, y, z));
-    beacons.push({ p: [xo - 6, y, z], c: z < hz ? '#7FF0B0' : '#7FCBFF' });
+  function tryBay({ origin, theta, slots: n, main = false, kind }) {
+    const HL = main ? 1 + n * SP + PAD + ASM + 1 : 2 + n * SP, zs = -HL / 2, ze = HL / 2;
+    const Q = new THREE.Quaternion().setFromAxisAngle(YAX, theta), M = new THREE.Matrix4().compose(origin, Q, ONE3);
+    const cav = tb(M, [0, 0, zs, BD, BH, ze]), lane = tb(M, [-48, -0.5, zs - 0.5, 0, 4.5, ze + 0.5]);
+    const blocks = [[0, -3, zs - 4, BF + 2, 0, ze + 4], [0, BH, zs - 4, BF + 2, BH + 2.5, ze + 4], [0, 0, zs - 4, BF + 2, BH, zs], [0, 0, ze, BF + 2, BH, ze + 4], [BD, 0, zs, BF + 2, BH, ze]];
+    const blocksS = blocks.map(b => tb(M, b));
+    if (boxes.some(b => overlap(b, cav) || overlap(b, lane))) return null;
+    if (keepOut.some(b => blocksS.some(k => overlap(b, k)))) return null;
+    if (wingBoxes.some(w => blocksS.some(k => overlap(w, k, 0.5)))) return null;
+    keepOut.push(cav, lane);
+    const bay = { index: bays.length, kind, main, M, Q, theta, slots: n, HL, zs, ze, BD, BH, first: D.slots,
+      slotX: BD * 0.5 + 0.3, slotZ: i => zs + 1 + (i + 0.5) * SP, padZ: zs + 1 + n * SP + PAD / 2, zp: ze - 1 - ASM, zA: ze - 1 - ASM / 2 };
+    bay.center = new THREE.Vector3(BD / 2, BH / 2, 0).applyMatrix4(M);
+    bay.crewDoor = main ? new THREE.Vector3(BD - 0.6, 0, bay.padZ + 1.6) : new THREE.Vector3(BD - 0.6, 0, ze - 1.2);
+    for (let i = 0; i < n; i++) D.slotRefs.push({ bay, i });
+    D.slots += n; bays.push(bay);
+    // The block around the bay (seen from far, so it's part of the main hull mesh) and its solid volumes.
+    blocks.forEach((b, j) => { put(j < 2 ? 'plain' : 'dark', at(boxG(b[3] - b[0], b[4] - b[1], b[5] - b[2]), (b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2).applyMatrix4(M)); boxes.push(blocksS[j]); });
+    put('bayGlow', at(new THREE.PlaneGeometry(HL, BH * 0.9), BD - 0.02, BH / 2, 0, 0, -Math.PI / 2).applyMatrix4(M));   // a lit opening from far (behind the inside's back wall, so it's hidden up close)
+    put('green', at(boxG(0.4, 0.35, HL + 8), 0.2, -0.15, 0).applyMatrix4(M)); put('green', at(boxG(0.4, 0.35, HL + 8), 0.2, BH + 0.15, 0).applyMatrix4(M));
+    // Guide beacons on booms at both ends of the mouth: the moving lights you see from far away.
+    for (const z of [zs - 2, ze + 2]) for (const y of [-0.4, BH + 0.4]) {
+      put('steel', at(boxG(6, 0.3, 0.3), -3, y, z).applyMatrix4(M)); put('dark', at(boxG(0.5, 0.5, 0.5), -6, y, z).applyMatrix4(M));
+      beacons.push({ p: new THREE.Vector3(-6, y, z).applyMatrix4(M).toArray(), c: z < 0 ? '#7FF0B0' : '#7FCBFF', bay: bay.index });
+    }
+    // The inside, built in the bay's own frame and drawn only when the camera is near.
+    const Bi = batch(), pb = Bi.put, hmid = BD / 2;
+    pb('interior', at(boxG(0.4, BH, HL), BD - 0.2, BH / 2, 0));
+    chevrons(pb, HL - 1.2, 0.5, -0.02, -0.45, 0, -Math.PI / 2); chevrons(pb, HL - 1.2, 0.5, -0.02, BH + 0.45, 0, -Math.PI / 2);
+    for (let i = 0; i < n; i++) {
+      const z = bay.slotZ(i), dg = new THREE.PlaneGeometry(BD - 0.4, SP), uv = dg.attributes.uv;
+      for (let j = 0; j < uv.count; j++) uv.setXY(j, uv.getY(j), uv.getX(j));
+      pb('deck', at(dg, hmid + 0.2, 0.01, z, -Math.PI / 2));
+      pb('decal', at(decalG(1.1, 0.95, DECAL.bay((bay.first + i) % 16)), 1.1, 0.03, z, -Math.PI / 2));
+      pb('steel', at(boxG(BD * 0.92, 0.22, 0.22), hmid, BH - 0.3, z));
+      pb('dark', at(boxG(0.5, 0.25, 0.4), bay.slotX + 0.35, BH - 0.5, z));
+      pb('lamp', at(boxG(BD * 0.7, 0.06, 0.22), hmid, BH - 0.05, z + SP / 2));
+      if (i % 2 === 0) for (let r = 0; r < 3; r++) { pb('fuel', at(cylG(0.2, 0.2, 2.6, 10), BD - 0.55, 0.3 + r * 0.46, z, Math.PI / 2)); pb('dark', at(cylG(0.21, 0.21, 0.12, 10), BD - 0.55, 0.3 + r * 0.46, z + 1.3, Math.PI / 2)); }
+      else for (let r = 0; r < 2; r++) for (let c = 0; c < 4; c++) pb(c % 3 ? 'steel' : 'green', at(boxG(0.55, 0.42, 0.6), BD - 0.5, 0.22 + r * 0.46, z - 1.1 + c * 0.72));
+      pb('rack', at(new THREE.PlaneGeometry(SP - 0.4, BH * 0.4), BD - 0.41, BH * 0.78, z, 0, -Math.PI / 2));
+      pb('steel', at(boxG(0.1, BH * 0.55, 0.1), BD - 1.0, BH * 0.275, z + SP / 2));
+    }
+    const catY = BH * 0.55, catLen = HL - 2;
+    pb('steel', at(boxG(1.1, 0.1, catLen), BD - 0.75, catY, 0)); pb('steel', at(boxG(0.05, 0.05, catLen), BD - 1.27, catY + 0.5, 0));
+    for (let z = zs + 1.5; z < ze - 1; z += 2) pb('steel', at(boxG(0.05, 0.5, 0.05), BD - 1.27, catY + 0.25, z));
+    pb('steel', at(boxG(0.9, 0.08, BH * 0.75), BD - 0.75, BH * 0.28, zs + 1.4 + BH * 0.3, Math.atan2(BH * 0.55, BH * 0.6)));
+    pb('dark', at(boxG(0.1, 1.0, 0.6), BD - 0.42, 0.5, bay.crewDoor.z)); pb('lampG', at(boxG(0.06, 0.06, 0.7), BD - 0.45, 1.05, bay.crewDoor.z));
+    if (main) {
+      // The assembly bay at the end, behind a shutter, where new fighters roll out.
+      const DW = 3.8, DH = 2.6, dx = bay.slotX; bay.DW = DW; bay.DH = DH;
+      pb('black', at(boxG(dx - DW / 2, BH, 0.4), (dx - DW / 2) / 2, BH / 2, bay.zp)); pb('black', at(boxG(BD - (dx + DW / 2), BH, 0.4), (BD + dx + DW / 2) / 2, BH / 2, bay.zp));
+      pb('black', at(boxG(DW, BH - DH, 0.4), dx, DH + (BH - DH) / 2, bay.zp)); chevrons(pb, DW, 0.3, dx, DH + 0.2, bay.zp - 0.21, Math.PI);
+      pb('black', at(boxG(0.5, BH, ASM), 0.25, BH / 2, bay.zA)); pb('decal', at(decalG(ASM * 0.8, ASM * 0.1, DECAL.caution), -0.02, BH * 0.5, bay.zA, 0, -Math.PI / 2));
+      pb('deck', at(new THREE.PlaneGeometry(BD - 0.6, ASM), hmid + 0.2, 0.01, bay.zA, -Math.PI / 2));
+      for (const s2 of [-1, 1]) pb('steel', at(boxG(0.25, BH - 0.3, 0.25), dx + s2 * 2.2, (BH - 0.3) / 2, bay.zA));
+      pb('steel', at(boxG(4.6, 0.25, 0.25), dx, BH - 0.4, bay.zA)); pb('lamp', at(boxG(3, 0.05, 0.3), dx, BH - 0.06, bay.zA));
+      pb('decal', at(decalG(BH * 0.6, BH * 0.6, DECAL.badge), hmid, BH * 0.5, zs - 4.03, 0, Math.PI));
+    }
+    bay.group = new THREE.Group(); bay.group.matrixAutoUpdate = false; bay.group.matrix.copy(M); bay.group.visible = false;
+    for (const m of Bi.meshes(mats)) bay.group.add(m);
+    root.add(bay.group);
+    return bay;
   }
-  // The bay's control tower: a small lookout on the flank at the front end, with lit windows and a radar bar.
-  const ct = { x: xo + 3, y: fy1, z: fz0 + 3, s: 4 };
+  // Where bays may go: rails along the hull, each a side, a height and a stretch of hull.
+  const flankY = Math.min(-0.36 * H, H * 0.11 - 1 - 2.5 - BH);   // low enough that a bay's block stays under the wings
+  const RAILS = {
+    portFlank: { x: -(W / 2 + BF), y: flankY, z0: zn + 4, z1: zt - 4, theta: 0 },
+    stbdFlank: { x: W / 2 + BF, y: flankY, z0: zn + 4, z1: zt - 4, theta: Math.PI },
+    portUpper: { x: -(0.37 * W + BF), y: 0.55 * H, z0: -0.12 * L, z1: 0.42 * L, theta: 0 },
+    stbdUpper: { x: 0.37 * W + BF, y: 0.55 * H, z0: -0.12 * L, z1: 0.42 * L, theta: Math.PI },
+    portUnder: { x: -(0.25 * W + BF), y: -0.8 * H, z0: -0.27 * L, z1: 0.36 * L, theta: 0 },
+    stbdUnder: { x: 0.25 * W + BF, y: -0.8 * H, z0: -0.27 * L, z1: 0.36 * L, theta: Math.PI },
+  };
+  const BAY_PLAN = {
+    frigate: [['portFlank', [3], true], ['stbdFlank', [3]]],
+    cruiser: [['portFlank', [6, 3, 3], true], ['stbdFlank', [3, 3, 3, 3]], ['rear', [5]], ['portUnder', [3]], ['stbdUnder', [3]]],
+    carrier: [['portFlank', [6, 4, 4, 4, 4, 4, 4, 4], true], ['stbdFlank', [4, 4, 4, 4, 4, 4, 4, 4]], ['rear', [6]], ['portUpper', [3, 3, 3]], ['stbdUpper', [3, 3, 3, 3]],
+      ['portUnder', [3, 3, 3]], ['stbdUnder', [3, 3, 3]]],
+  }[key];
+  const target = { frigate: 2, cruiser: 8, carrier: 30 }[key];
+  for (const [rail, sizes, hasMain] of BAY_PLAN) {
+    if (bays.length >= target) break;
+    if (rail === 'rear') { tryBay({ origin: new THREE.Vector3(0, H * 1.05 + 1.2, L / 2), theta: Math.PI / 2, slots: sizes[0], kind: 'rear' }); continue; }   // on top of the engine block, its lane clear above the engines
+    // Spread this rail's bays evenly along its stretch of hull.
+    const R0 = RAILS[rail], lens = sizes.map((n, i) => (hasMain && i === 0 ? 1 + n * SP + PAD + ASM + 1 : 2 + n * SP) + 9);
+    const free = (R0.z1 - R0.z0) - lens.reduce((a, b) => a + b, 0), gap = free / (sizes.length + 1);
+    let z = R0.z0 + Math.max(0, gap);
+    sizes.forEach((n, i) => {
+      if (bays.length >= target) return;
+      const zc = z + lens[i] / 2; z += lens[i] + Math.max(0, gap);
+      if (gap < 0 && zc + lens[i] / 2 > R0.z1) return;
+      tryBay({ origin: new THREE.Vector3(R0.x, R0.y, zc), theta: R0.theta, slots: n, main: hasMain && i === 0 && !bays.some(b => b.main), kind: rail });
+    });
+  }
+  // There must always be a main bay (new fighters roll out of it): if the plan didn't fit one, put a small one wherever it fits.
+  if (!bays.some(b => b.main)) for (const rail of ['portFlank', 'stbdFlank', 'portUnder', 'stbdUnder']) {
+    const R0 = RAILS[rail]; let done = false;
+    for (let f = 0.5; f > 0.05 && f < 0.95 && !done; f += f >= 0.5 ? -(f - 0.5) * 2 - 0.1 : (0.5 - f) * 2) done = !!tryBay({ origin: new THREE.Vector3(R0.x, R0.y, R0.z0 + (R0.z1 - R0.z0) * f), theta: R0.theta, slots: 2, main: true, kind: rail });
+    if (done) break;
+  }
+  const mainBay = bays.find(b => b.main) || bays[0];
+  if (!mainBay) throw new Error('No room for a hangar bay on the ' + key);
+  // The main bay's lookout: a small tower on its block, with lit windows and a radar bar.
+  const ctP = new THREE.Vector3(3, BH + 2.5, mainBay.zs - 1).applyMatrix4(mainBay.M), ct = { x: ctP.x, y: ctP.y, z: ctP.z, s: 4 };
   put('black', at(boxG(ct.s, ct.s * 1.1, ct.s), ct.x, ct.y + ct.s * 0.55, ct.z));
   put('steel', at(boxG(ct.s * 1.3, ct.s * 0.5, ct.s * 1.3), ct.x, ct.y + ct.s * 1.35, ct.z));
-  for (const [ox, oz, ry] of [[-ct.s * 0.66, 0, -Math.PI / 2], [0, -ct.s * 0.66, Math.PI]]) put('win', at(new THREE.PlaneGeometry(ct.s * 1.1, ct.s * 0.3), ct.x + ox, ct.y + ct.s * 1.38, ct.z + oz, 0, ry));
   solid(ct.x - ct.s * 0.65, ct.y, ct.z - ct.s * 0.65, ct.x + ct.s * 0.65, ct.y + ct.s * 1.8, ct.z + ct.s * 0.65);
   const radar = new THREE.Mesh(at(boxG(ct.s * 1.1, 0.4, 0.8), 0, 0, 0), mats.steel); radar.position.set(ct.x, ct.y + ct.s * 1.75, ct.z);
 
-  // ----- Turret-like emitters along the decks (nothing fires yet; the guns come in the next stage). -----
-  const s = k * 0.9;
-  const turretSpots = [[0, H * 0.5, -0.36 * L], [0, H * 0.97, -0.18 * L], [W * 0.2, H * 0.97, 0.36 * L], [-W * 0.25, H * 0.97, 0.05 * L], [0, -H * 0.82, -0.2 * L], [0, -H * 0.82, 0.25 * L],
-    [topX, H * 1.29, 0.06 * L], [topX - W * 0.15, H * 1.29, 0.3 * L], [W * 0.3, H * 0.97, -0.08 * L], [-W * 0.3, H * 0.97, 0.3 * L], [W * 0.12, -H * 0.82, 0.05 * L], [-W * 0.12, -H * 0.82, 0.35 * L]];
-  for (const [i, [x, y, z]] of turretSpots.slice(0, t.turrets).entries()) {
-    const down = y < 0 ? -1 : 1;
-    const g = [cylG(1.0 * s, 1.15 * s, 0.4 * s, 10), new THREE.SphereGeometry(0.85 * s, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.2 * s, 0)];
-    for (const o of [-0.28, 0.28]) g.push(cylG(0.08 * s, 0.1 * s, 2.4 * s, 6).rotateX(Math.PI / 2).translate(o * s, 0.55 * s, -1.4 * s));
-    for (const geo of g) { if (down < 0) geo.rotateX(Math.PI); put(i % 2 ? 'steel' : 'plain', geo.translate(x, y, z)); }
+  // ----- Docking arms on the right side and underneath: long trusses with clamp rings, wherever they don't block a bay. -----
+  for (let i = 0; i < t.arms; i++) {
+    const down = i % 3 === 2, z = -0.18 * L + (i / Math.max(1, t.arms - 1)) * 0.5 * L, len = W * (0.18 + rnd() * 0.08), th = L * 0.006;
+    if (down) {
+      const box = [-th * 5, -H * 0.82 - len - th * 5, z - th * 5, th * 5, -H * 0.82, z + th * 5];
+      if (keepOut.some(b => overlap(b, box, 2)) || boxes.some(b => overlap(b, [box[0], box[1], box[2], box[3], box[4] - 0.5, box[5]]))) continue;
+      put('steel', at(boxG(th, len, th), 0, -H * 0.82 - len / 2, z));
+      for (let j = 1; j < 5; j++) put('dark', at(boxG(th * 3, th * 0.5, th * 0.5), 0, -H * 0.82 - len * j / 5, z));
+      put('plain', at(new THREE.TorusGeometry(th * 4, th * 0.9, 6, 16), 0, -H * 0.82 - len, z, Math.PI / 2));
+      solid(...box);
+    } else {
+      const y = -H * 0.18, x0 = W / 2, box = [x0, y - th * 5, z - th * 5, x0 + len + th * 5, y + th * 6, z + th * 5];
+      if (keepOut.some(b => overlap(b, box, 2)) || boxes.some((b, bi) => bi > 0 && overlap(b, box))) continue;   // only the hull itself may touch it
+      put('steel', at(boxG(len, th, th), x0 + len / 2, y, z)); put('steel', at(boxG(len, th, th), x0 + len / 2, y + th * 3, z));
+      for (let j = 0; j <= 5; j++) put('dark', at(boxG(th * 0.5, th * 3, th * 0.5), x0 + len * j / 5, y + th * 1.5, z));
+      put('plain', at(new THREE.TorusGeometry(th * 4, th * 0.9, 6, 16), x0 + len, y + th * 1.5, z, 0, Math.PI / 2));
+      solid(...box);
+    }
   }
+
+  // ----- Guns: heavy twin-barrel turrets, point-defence turrets and missile batteries, all over the hull. -----
+  // Mounts are picked on the decks' surfaces (upside down underneath), away from bays, lanes and each other.
+  const TS = clamp(L / 150, 0.5, 4.5), turretList = [];
+  const surfaces = [
+    { y: H * 1.29, up: 1, x: [topX - W * 0.2, topX + W * 0.2], z: [0.03 * L, 0.36 * L], w: 3 },
+    { y: H * 0.97, up: 1, x: [-W * 0.35, W * 0.35], z: [-0.13 * L, 0.42 * L], w: 5 },
+    { y: H * 0.5, up: 1, x: [-W * 0.45, W * 0.45], z: [-0.3 * L, -0.25 * L], w: 1.5 },
+    { y: -H * 0.82, up: -1, x: [-W * 0.22, W * 0.22], z: [-0.34 * L, 0.42 * L], w: 3 },
+    { y: -H * 0.5, up: -1, x: [-W * 0.45, -W * 0.28], z: [zn, zt], w: 1.5 }, { y: -H * 0.5, up: -1, x: [W * 0.28, W * 0.45], z: [zn, zt], w: 1.5 },
+    { y: H * 0.305, up: 1, x: [tipL + W * 0.04, -W / 2 - 2], z: [-0.08 * L, 0.2 * L], w: 1.5 }, { y: H * 0.245, up: 1, x: [W / 2 + 2, tipR - W * 0.04], z: [-0.14 * L, 0.3 * L], w: 1.5 },
+    ...towerSpots.map(([x, y, z]) => ({ y, up: 1, x: [x - 0.5, x + 0.5], z: [z - 0.5, z + 0.5], w: 0.25, kinds: ['pd'] })),
+    // Ledges of the command tower's lower tiers, and the top of the engine block.
+    { y: base + tiers[0][2], up: 1, x: [txC - tiers[0][0] / 2, txC + tiers[0][0] / 2], z: [tzC - tiers[0][1] / 2, tzC + tiers[0][1] / 2], w: 1, kinds: ['pd', 'missile'] },
+    { y: base + tiers[0][2] + tiers[1][2], up: 1, x: [txC - tiers[1][0] / 2, txC + tiers[1][0] / 2], z: [tzC - tiers[1][1] / 2, tzC + tiers[1][1] / 2], w: 0.6, kinds: ['pd'] },
+    { y: H * 1.05, up: 1, x: [-W * 0.46, W * 0.46], z: [zt, L / 2 - 2], w: 1.5 },
+    { y: -H * 0.75, up: -1, x: [-W * 0.46, W * 0.46], z: [zt, L / 2 - 2], w: 1 },
+  ];
+  const wsum = surfaces.reduce((a, b) => a + b.w, 0);
+  const counts = { frigate: { heavy: 2, pd: 3, missile: 1 }, cruiser: { heavy: 8, pd: 16, missile: 6 }, carrier: { heavy: 30, pd: 66, missile: 24 } }[key];
+  // Footprint radius and barrel reach (from the turret's centre, in TS units). Its whole sweep must be clear, so the
+  // barrels can turn all the way round without passing through a tower, a building or another turret.
+  const TSZ = { heavy: [2.0, 5.0], pd: [0.9, 2.0], missile: [1.4, 1.6] };
+  for (const kind of ['heavy', 'missile', 'pd']) for (let n = 0, tries = 0; n < counts[kind] && tries < 4000; tries++) {
+    let r = rnd() * wsum, sf = surfaces[0]; for (const s2 of surfaces) { r -= s2.w; if (r <= 0) { sf = s2; break; } }
+    if (sf.kinds && !sf.kinds.includes(kind)) continue;
+    const rad = TSZ[kind][0] * TS, reach = TSZ[kind][1] * TS, x = sf.x[0] + rnd() * (sf.x[1] - sf.x[0]), z = sf.z[0] + rnd() * (sf.z[1] - sf.z[0]), y = sf.y;
+    if (Math.abs(z - tzC) < 0.075 * L && Math.abs(x - txC) < W * 0.13 && sf.up > 0 && y < H * 1.3) continue;      // the command tower
+    // Its whole swept volume must be clear of other solids (above the surface it sits on) and of bays and lanes.
+    const hgt = reach + 1.5 * TS;
+    const vol = sf.up > 0 ? [x - reach, y + 0.05, z - reach, x + reach, y + hgt, z + reach] : [x - reach, y - hgt, z - reach, x + reach, y - 0.05, z + reach];
+    if (boxes.some(b => overlap(b, vol)) || keepOut.some(b => overlap(b, vol, 2))) continue;
+    if (turretList.some(tt => Math.hypot(tt.pos.x - x, tt.pos.y - y, tt.pos.z - z) < Math.max(tt.reach + rad, reach + tt.rad) + 0.5)) continue;
+    turretList.push({ kind, pos: new THREE.Vector3(x, y, z), up: sf.up, rad, reach, baseYaw: rnd() * Math.PI * 2, phase: rnd() * 10 });
+    n++;
+  }
+  // The city leaves room for the guns.
+  const turretSpots = turretList.map(tt => [tt.pos.x, tt.pos.y, tt.pos.z, tt.reach]);
 
   // ----- Antenna forests and dish arrays. -----
   const ant = [];
-  const forest = (cx, cy, cz, rx, rz, n) => { for (let i = 0; i < n; i++) ant.push([cx + (rnd() - 0.5) * rx, cy, cz + (rnd() - 0.5) * rz, L * (0.0005 + rnd() * 0.0008), H * (0.06 + Math.pow(rnd(), 2) * 0.35)]); };
+  const nearGun = (x, y, z, pad) => turretSpots.some(([tx_, ty_, tz, tr]) => Math.abs(ty_ - y) < 2 && Math.hypot(tx_ - x, tz - z) < tr + pad);
+  const forest = (cx, cy, cz, rx, rz, n) => { for (let i = 0; i < n; i++) { const x = cx + (rnd() - 0.5) * rx, z = cz + (rnd() - 0.5) * rz; if (nearGun(x, cy, z, 1)) continue; ant.push([x, cy, z, L * (0.0005 + rnd() * 0.0008), H * (0.06 + Math.pow(rnd(), 2) * 0.35)]); } };
   const perForest = Math.ceil(t.antennas / 5);
   forest(topX, H * 1.29, 0.31 * L, W * 0.3, 0.05 * L, perForest);
   forest(-W * 0.22, H * 0.97, -0.17 * L, W * 0.2, 0.05 * L, perForest);
@@ -475,6 +566,7 @@ function buildMothership(key) {
     const x = (rnd() - 0.5) * W * 0.6, z = -0.2 * L + rnd() * 0.55 * L, onTop = Math.abs(x - topX) < W * 0.2 && z > 0.02 * L && z < 0.34 * L;
     const y0 = onTop ? H * 1.29 : H * 0.97, r = H * (0.06 + rnd() * 0.08), post = r * 1.2;
     if (Math.abs(z - tzC) < 0.09 * L && Math.abs(x - txC) < W * 0.16) continue;
+    if (nearGun(x, y0, z, r + 1)) continue;
     put('steel', at(cylG(r * 0.08, r * 0.14, post, 8), x, y0 + post / 2, z));
     put('steel', at(new THREE.SphereGeometry(r, 14, 6, 0, Math.PI * 2, 0, 0.9), x, y0 + post + r * 0.2, z, -0.6 - rnd() * 0.5, rnd() * 6.28));
     solid(x - r, y0, z - r, x + r, y0 + post + r * 1.4, z + r);
@@ -493,6 +585,8 @@ function buildMothership(key) {
       if (Math.abs(z - tzC) < 0.075 * L && Math.abs(x - txC) < W * 0.13) continue;                               // the command tower
       if (skipTop && Math.abs(x - topX) < W * 0.25 && z > -0.05 * L && z < 0.39 * L) continue;                   // under the top deck
       if (towerSpots.some(([tx_, , tz]) => Math.abs(tx_ - x) < cs * 1.5 && Math.abs(tz - z) < cs * 1.5)) continue;
+      if (turretSpots.some(([tx_, ty_, tz, tr]) => Math.abs(ty_ - y0) < 1 && Math.hypot(tx_ - x, tz - z) < tr * 1.3 + cs)) continue;   // the guns
+      if (keepOut.some(b => overlap(b, [x - cs, y0, z - cs, x + cs, y0 + H * 0.2, z + cs], 1))) continue;                               // bays and lanes
       if (rnd() < 0.12) continue;
       const district = 0.5 + 0.5 * Math.sin(z / (0.05 * L) + x / (0.05 * W)), h = H * (0.025 + Math.pow(rnd(), 2.2) * 0.13 * (0.4 + district));
       const fw = cs * (0.6 + rnd() * 0.3), fd = cs * (0.6 + rnd() * 0.3);
@@ -512,28 +606,40 @@ function buildMothership(key) {
 
   // ----- Markings: badges, the patrol stripe, the serial number and warning signs, sized to the ship. -----
   const sideX = W / 2 + lift, segC = i => (segs[i][0] + segs[i][1]) / 2, last = t.segs - 1;
-  putD('decal', at(decalG(Math.min(H * 1.4, segLen * 0.7), Math.min(H * 1.4, segLen * 0.7) * 0.22, DECAL.stripe), sideX, -H * 0.02, segs[0][0] + segLen * 0.4, 0, Math.PI / 2));
-  putD('decal', at(decalG(H * 0.48, H * 0.48, DECAL.badge), sideX, 0, segC(1), 0, Math.PI / 2));
-  putD('serial', at(decalG(H * 0.9, H * 0.22, [0, 0, 1, 1]), sideX, H * 0.08, segC(last), 0, Math.PI / 2));
-  putD('decal', at(decalG(H * 0.48, H * 0.48, DECAL.badge), -sideX, 0, segC(last), 0, -Math.PI / 2));
-  putD('decal', at(decalG(H * 1.6, H * 0.12, DECAL.letters), -sideX, 0, segC(last) - H * 1.3, 0, -Math.PI / 2));
+  // A marking on the hull side is left out where a bay's block stands in front of it.
+  const putD0 = putD;
+  const putDM = (key2, g) => { g.computeBoundingBox(); const bb = g.boundingBox; const box = [bb.min.x - 0.5, bb.min.y, bb.min.z, bb.max.x + 0.5, bb.max.y, bb.max.z];
+    if (bays.some(b => overlap(tb(b.M, [0, -3, b.zs - 4, BF + 2, BH + 2.5, b.ze + 4]), box))) return; putD0(key2, g); };
+  putDM('decal', at(decalG(Math.min(H * 1.4, segLen * 0.7), Math.min(H * 1.4, segLen * 0.7) * 0.22, DECAL.stripe), sideX, -H * 0.02, segs[0][0] + segLen * 0.4, 0, Math.PI / 2));
+  putDM('decal', at(decalG(H * 0.48, H * 0.48, DECAL.badge), sideX, 0, segC(1), 0, Math.PI / 2));
+  putDM('serial', at(decalG(H * 0.9, H * 0.22, [0, 0, 1, 1]), sideX, H * 0.08, segC(last), 0, Math.PI / 2));
+  putDM('decal', at(decalG(H * 0.48, H * 0.48, DECAL.badge), -sideX, 0, segC(last), 0, -Math.PI / 2));
+  putDM('decal', at(decalG(H * 1.6, H * 0.12, DECAL.letters), -sideX, 0, segC(last) - H * 1.3, 0, -Math.PI / 2));
   const nzA = -0.42 * L, nAng = Math.atan2(W * 0.3, zn - nzA);
-  for (const s2 of [-1, 1]) putD('decal', at(decalG((zn - nzA) / Math.cos(nAng) * 0.8, H * 0.25, DECAL.stripe), s2 * (W * 0.35 + lift), -H * 0.05, (nzA + zn) / 2, 0, s2 * (Math.PI / 2 + nAng)));
-  putD('decal', at(decalG(W * 0.5, W * 0.06, DECAL.caution), 0, H * 1.0, L / 2 + lift));
-  putD('serial', at(decalG(W * 0.3, W * 0.075, [0, 0, 1, 1]), W * 0.24, H / 2 + lift, segC(0), -Math.PI / 2, Math.PI / 2));
+  for (const s2 of [-1, 1]) putDM('decal', at(decalG((zn - nzA) / Math.cos(nAng) * 0.8, H * 0.25, DECAL.stripe), s2 * (W * 0.35 + lift), -H * 0.05, (nzA + zn) / 2, 0, s2 * (Math.PI / 2 + nAng)));
+  putDM('decal', at(decalG(W * 0.5, W * 0.06, DECAL.caution), 0, H * 1.0, L / 2 + lift));
+  putDM('serial', at(decalG(W * 0.3, W * 0.075, [0, 0, 1, 1]), W * 0.24, H / 2 + lift, segC(0), -Math.PI / 2, Math.PI / 2));
 
   for (const m of B.meshes(mats)) core.add(m);
   for (const m of Bd.meshes(mats)) detail.add(m);
-  for (const m of Bb.meshes(mats)) bayGroup.add(m);
-  bayGroup.add(radar);
+  core.add(radar);
 
-  // ----- Moving parts: the shutter, the refuelling arms and hoses, the beacon. -----
-  const door = new THREE.Mesh(at(boxG(DW, DH, 0.15), 0, DH / 2, 0), mats.steel); door.position.set(dx, deckY, D.zp - 0.05); bayGroup.add(door);
+  // ----- Moving parts in every bay: the shutter (main bay), refuelling arms and hoses, landing lights that chase inward. -----
+  const service = Array.from({ length: D.slots }, () => ({ arm: 0, hose: 0, want: 0, landing: false }));
   const armGeo = mergeGeometries([boxG(0.14, 1, 0.14).translate(0, -0.5, 0), boxG(0.4, 0.12, 0.3).translate(0, -1, 0)].map(g => g.toNonIndexed()));
-  const arms = new THREE.InstancedMesh(armGeo, new THREE.MeshStandardMaterial({ color: '#B58A2E', roughness: 0.6, map: tx.armor }), slots);
-  const hoses = new THREE.InstancedMesh(cylG(0.06, 0.06, 1, 6).translate(0, 0.5, 0), new THREE.MeshStandardMaterial({ color: '#2A2C2E', roughness: 0.7, emissive: '#15191B' }), slots);
-  arms.frustumCulled = hoses.frustumCulled = false; bayGroup.add(arms, hoses);
-  const service = Array.from({ length: slots }, () => ({ arm: 0, hose: 0, want: 0 }));
+  const armMat = new THREE.MeshStandardMaterial({ color: '#B58A2E', roughness: 0.6, map: tx.armor }), hoseMat = new THREE.MeshStandardMaterial({ color: '#2A2C2E', roughness: 0.7, emissive: '#15191B' });
+  const hoseGeo = cylG(0.06, 0.06, 1, 6).translate(0, 0.5, 0);
+  const bayLightMats = [];
+  for (const bay of bays) {
+    bay.arms = new THREE.InstancedMesh(armGeo, armMat, bay.slots); bay.hoses = new THREE.InstancedMesh(hoseGeo, hoseMat, bay.slots);
+    bay.arms.frustumCulled = bay.hoses.frustumCulled = false; bay.group.add(bay.arms, bay.hoses);
+    const land = []; for (let i = 0; i < bay.slots; i++) for (let j = 0; j < 4; j++) land.push({ p: [0.3 + j * 0.9, 0.08, bay.slotZ(i)], c: '#FFE6A8' });
+    bay.land = dots(land, tx.glow, 0.7, 1);
+    const lip = []; for (let z = bay.zs + 1; z < bay.ze - 0.5; z += 1.6) lip.push({ p: [0.05, 0.12, z], c: '#7FCBFF' }, { p: [0.05, BH - 0.1, z], c: '#7FCBFF' });
+    const lipD = dots(lip, tx.glow, 0.55, 0.9);
+    bay.group.add(bay.land, lipD); bayLightMats.push(bay.land.material, lipD.material);
+    if (bay.main) { bay.door = new THREE.Mesh(at(boxG(bay.DW, bay.DH, 0.15), 0, bay.DH / 2, 0), mats.steel); bay.door.position.set(bay.slotX, 0, bay.zp - 0.05); bay.group.add(bay.door); }
+  }
   // The beacon on the command tower: a lamp with two slowly turning beams (blue and green), and a big soft pulse.
   const bk = k * 0.6, beacon = new THREE.Group(); beacon.position.set(txC + w3 * 0.1, towerTop + 0.3 * bk, tzC - d3 * 0.1);
   const housing = new THREE.Mesh(cylG(0.35 * bk, 0.45 * bk, 0.5 * bk, 10), mats.plain); housing.position.y = -0.1 * bk;
@@ -544,7 +650,7 @@ function buildMothership(key) {
   beacon.add(housing, lampMesh, beams); core.add(beacon);
   const pulse = dots([{ p: [beacon.position.x, beacon.position.y + 0.3 * bk, beacon.position.z], c: '#9FE6FF' }], tx.glow, L * 0.035, 0.9);
 
-  // ----- Lights: running lights along every edge and tower, engine glow, and the bay's lamps. -----
+  // ----- Lights: running lights along every edge and tower, engine glow, and the bays' guide beacons. -----
   const run = [], step = L / 45, ex = W / 2 - H * 0.12, ey = H * 0.5 - H * 0.05;
   for (let z = zn; z < zt; z += step) run.push({ p: [-ex - lift * 4, ey, z], c: '#7FCBFF' }, { p: [ex + lift * 4, ey, z], c: '#7FF0B0' });
   for (let z = -0.14 * L; z < 0.4 * L; z += step) run.push({ p: [-W * 0.36, H * 0.97, z], c: '#7FCBFF' }, { p: [W * 0.36, H * 0.97, z], c: '#7FF0B0' });
@@ -556,20 +662,90 @@ function buildMothership(key) {
   for (let i = 0; i < 3; i++) { const [w, d] = tiers[i]; let yy = base; for (let j = 0; j <= i; j++) yy += tiers[j][2]; for (const sx2 of [-1, 1]) for (const sz of [-1, 1]) run.push({ p: [txC + sx2 * w / 2, yy, tzC + sz * d / 2], c: sx2 < 0 ? '#7FCBFF' : '#7FF0B0' }); }
   const runLights = dots(run, tx.glow, L * 0.006, 0.9);
   const roof = dots(roofLights.length ? roofLights : [{ p: [0, 0, 0], c: '#000000' }], tx.glow, L * 0.004, 0.9);
-  // From very far, a few key lights keep a fixed size on screen so the outline still reads.
   const keyLights = [...[[0, -H * 0.15, -L / 2], [tipL, H * 0.24, 0.04 * L], [tipR, H * 0.18, 0.06 * L], [0, H * 0.15, L / 2 + eLen]].map(p => ({ p, c: '#BFEFFF' })), ...tops.slice(0, 8).map(p => ({ p, c: '#FFB0A0' }))];
   const farLights = new THREE.Points(dots(keyLights, tx.dot, 1).geometry, new THREE.PointsMaterial({ size: 4, sizeAttenuation: false, map: tx.dot, vertexColors: true, transparent: true, depthWrite: false }));
   farLights.frustumCulled = false;
   const engineGlow = dots(engines, tx.glow, re * 4.5, 0.75);
-  core.add(runLights, roof, farLights, engineGlow, pulse);
-  const land = [];
-  for (let i = 0; i < slots; i++) for (let j = 0; j < 4; j++) land.push({ p: [xo + 0.3 + j * 0.9, deckY + 0.08, D.slotZ(i)], c: '#FFE6A8' });
-  const landLights = dots(land, tx.glow, 0.7, 1);
-  const lip = []; for (let z = zs + 1; z < ze - 0.5; z += 1.6) lip.push({ p: [xo + 0.05, deckY + 0.12, z], c: '#7FCBFF' }, { p: [xo + 0.05, ceilY - 0.1, z], c: '#7FCBFF' });
-  const lipLights = dots(lip, tx.glow, 0.55, 0.9);
-  const beaconLights = dots(beacons, tx.glow, 2.4, 1);
-  bayGroup.add(landLights, lipLights);
-  core.add(beaconLights);   // the guide beacons are seen from far: they mark where the bay is
+  // Guide beacons blink in turn along each bay mouth, so from far away the bays read as lit openings with moving lights.
+  const beaconLights = dots(beacons, tx.glow, 2.6, 1);
+  core.add(runLights, roof, farLights, engineGlow, pulse, beaconLights);
+
+  // ----- Turret meshes: each kind is a base, a head that turns, and guns that tilt, all instanced. -----
+  const tcol = (g, hex) => { g = g.index ? g.toNonIndexed() : g; const c = new THREE.Color(hex), n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) a.set([c.r, c.g, c.b], i * 3); g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g; };
+  const BLK = '#34383C', STL = '#5C636A', GRN = '#3E6049', DRK = '#1A1C1E', s = TS;
+  const KIND = {
+    heavy: { base: [tcol(cylG(1.5 * s, 1.75 * s, 0.7 * s, 14).translate(0, 0.35 * s, 0), BLK), tcol(cylG(1.58 * s, 1.58 * s, 0.14 * s, 14, true).translate(0, 0.6 * s, 0), GRN)],
+      head: [tcol(boxG(2.4 * s, 1.1 * s, 2.8 * s).translate(0, 1.25 * s, 0.15 * s), STL), tcol(boxG(2.0 * s, 0.5 * s, 0.9 * s).translate(0, 1.6 * s, 1.15 * s), BLK), tcol(boxG(0.5 * s, 0.3 * s, 0.5 * s).translate(0.75 * s, 1.95 * s, 0.6 * s), DRK)],
+      gun: [...[-0.45, 0.45].flatMap(o => [tcol(cylG(0.13 * s, 0.18 * s, 3.8 * s, 8).rotateX(Math.PI / 2).translate(o * s, 0, -2.8 * s), DRK), tcol(cylG(0.21 * s, 0.21 * s, 0.25 * s, 8).rotateX(Math.PI / 2).translate(o * s, 0, -2.1 * s), GRN)]),
+        tcol(boxG(1.5 * s, 0.65 * s, 1.0 * s).translate(0, 0, -0.6 * s), BLK)],
+      pivot: [0, 1.3 * s, -1.0 * s], muzzles: [[-0.45 * s, 0, -4.7 * s], [0.45 * s, 0, -4.7 * s]], top: 2.15 * s, rate: 0.35, cool: 0.75 },
+    pd: { base: [tcol(cylG(0.7 * s, 0.8 * s, 0.4 * s, 10).translate(0, 0.2 * s, 0), BLK)],
+      head: [tcol(new THREE.SphereGeometry(0.62 * s, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, 0.4 * s, 0), STL), tcol(boxG(0.3 * s, 0.2 * s, 0.3 * s).translate(0, 1.0 * s, 0.2 * s), DRK)],
+      gun: [...[-0.12, 0.12].map(o => tcol(cylG(0.05 * s, 0.07 * s, 1.5 * s, 6).rotateX(Math.PI / 2).translate(o * s, 0, -1.0 * s), DRK)), tcol(boxG(0.5 * s, 0.32 * s, 0.5 * s), BLK)],
+      pivot: [0, 0.72 * s, 0], muzzles: [[-0.12 * s, 0, -1.8 * s], [0.12 * s, 0, -1.8 * s]], top: 1.15 * s, rate: 1.0, cool: 0.5 },
+    missile: { base: [tcol(cylG(1.0 * s, 1.15 * s, 0.45 * s, 12).translate(0, 0.22 * s, 0), BLK), tcol(cylG(1.03 * s, 1.03 * s, 0.1 * s, 12, true).translate(0, 0.4 * s, 0), GRN)],
+      head: [tcol(boxG(1.5 * s, 0.4 * s, 1.5 * s).translate(0, 0.6 * s, 0), STL)],
+      gun: [tcol(boxG(1.9 * s, 1.1 * s, 1.6 * s), BLK), tcol(boxG(1.95 * s, 0.14 * s, 1.65 * s).translate(0, 0.3 * s, 0), GRN),
+        ...[0, 1, 2].flatMap(c => [0, 1].map(r => tcol(new THREE.CircleGeometry(0.2 * s, 10).rotateY(Math.PI).translate((c - 1) * 0.55 * s, (r - 0.5) * 0.45 * s, -0.81 * s), DRK)))],
+      pivot: [0, 1.25 * s, 0], muzzles: [[-0.55 * s, 0.22 * s, -0.9 * s], [0.55 * s, -0.22 * s, -0.9 * s], [0, 0.22 * s, -0.9 * s]], top: 1.85 * s, rate: 0.5, cool: 4.5 },
+  };
+  const turretMat = hullShader(new THREE.MeshStandardMaterial({ vertexColors: true, map: tx.armor, roughness: 0.8, metalness: 0.2, emissive: '#1C2024', emissiveMap: tx.armor }), false);
+  const turretMeshes = {}, sensorPts = [];
+  for (const [kind, K] of Object.entries(KIND)) {
+    const list = turretList.filter(tt => tt.kind === kind); if (!list.length) continue;
+    turretMeshes[kind] = {};
+    for (const part of ['base', 'head', 'gun']) {
+      const g = mergeGeometries(K[part].map(x => { x.deleteAttribute('normal'); x.computeVertexNormals(); return x; }));
+      const im = new THREE.InstancedMesh(g, turretMat, list.length); im.frustumCulled = false; core.add(im); turretMeshes[kind][part] = im;
+    }
+    list.forEach((tt, i) => { tt.i = i; tt.K = K; tt.mq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), tt.up > 0 ? 0 : Math.PI); tt.yaw = tt.baseYaw; tt.pitch = 0.2; tt.cd = Math.random() * 3; tt.alt = 0;
+      sensorPts.push({ p: tt.pos.clone().addScaledVector(new THREE.Vector3(0, tt.up, 0), K.top).toArray(), c: '#7FF0B0' }); });
+  }
+  const sensors = dots(sensorPts.length ? sensorPts : [{ p: [0, 0, 0], c: '#000000' }], tx.glow, Math.max(0.6, TS * 0.6), 0.9);
+  core.add(sensors);
+  // Write a turret's matrices from its yaw and pitch (all in ship space).
+  const hq = new THREE.Quaternion(), tq = new THREE.Quaternion(), tv = new THREE.Vector3(), hm = new THREE.Matrix4(), gm = new THREE.Matrix4(), pm = new THREE.Matrix4(), XAX = new THREE.Vector3(1, 0, 0);
+  function writeTurret(tt) {
+    const M3 = turretMeshes[tt.kind];
+    hq.copy(tt.mq).multiply(tq.setFromAxisAngle(YAX, tt.yaw));
+    hm.compose(tt.pos, hq, ONE3); M3.head.setMatrixAt(tt.i, hm);
+    pm.compose(tv.set(...tt.K.pivot), tq.setFromAxisAngle(XAX, tt.pitch), ONE3); gm.multiplyMatrices(hm, pm); M3.gun.setMatrixAt(tt.i, gm);
+    tt.gm = (tt.gm || new THREE.Matrix4()).copy(gm);
+  }
+  for (const tt of turretList) { turretMeshes[tt.kind].base.setMatrixAt(tt.i, hm.compose(tt.pos, tt.mq, ONE3)); writeTurret(tt); }
+  // Where a turret wants to point to aim at p (ship space): yaw and pitch in its own mount frame, and whether that's above its horizon.
+  const av = new THREE.Vector3(), aq = new THREE.Quaternion();
+  function aimAt(tt, p) {
+    av.copy(p).sub(tt.pos).applyQuaternion(aq.copy(tt.mq).invert());
+    av.y -= tt.K.pivot[1];
+    return { yaw: Math.atan2(-av.x, -av.z), pitch: Math.atan2(av.y, Math.hypot(av.x, av.z)) };
+  }
+  // A muzzle's position and direction in ship space (alternating barrels).
+  function muzzle(tt, outP, outD) {
+    const m = tt.K.muzzles[tt.alt++ % tt.K.muzzles.length];
+    outP.set(...m).applyMatrix4(tt.gm); outD.set(0, 0, -1).transformDirection(tt.gm);
+    return outP;
+  }
+  const turrets = { list: turretList, aimAt, muzzle, meshes: turretMeshes, TS,
+    // Turn every turret toward what it wants (idle sweep, or a target), smoothly and slowly. Only runs when the camera is near.
+    update(dt, time, { calm, want }) {
+      for (const tt of turretList) {
+        let w = calm ? null : want(tt);
+        if (!w) w = calm ? { yaw: tt.yaw, pitch: tt.pitch } : { yaw: tt.baseYaw + Math.sin(time * 0.13 + tt.phase) * 1.0, pitch: 0.22 + 0.15 * Math.sin(time * 0.09 + tt.phase * 1.7) };
+        const r = tt.K.rate * dt, dy = Math.atan2(Math.sin(w.yaw - tt.yaw), Math.cos(w.yaw - tt.yaw));
+        tt.yaw += clamp(dy, -r, r); tt.pitch += clamp(clamp(w.pitch, -0.05, 1.3) - tt.pitch, -r * 0.7, r * 0.7);
+        tt.aimErr = Math.abs(dy) + Math.abs(clamp(w.pitch, -0.05, 1.3) - tt.pitch);
+        writeTurret(tt);
+      }
+      for (const M3 of Object.values(turretMeshes)) { M3.head.instanceMatrix.needsUpdate = M3.gun.instanceMatrix.needsUpdate = true; }
+      // Sensor lights blink softly, each at its own pace.
+      const col = sensors.geometry.attributes.color;
+      for (let i = 0; i < turretList.length; i++) { const on = 0.35 + 0.65 * Math.max(0, Math.sin(time * 1.7 + turretList[i].phase * 3)); col.setXYZ(i, 0.5 * on, 0.94 * on, 0.75 * on); }
+      col.needsUpdate = true;
+    },
+    // Far away the guns are left out (the bases stay), so the far ship is cheaper.
+    setNear(nearby) { for (const M3 of Object.values(turretMeshes)) M3.gun.visible = nearby; },
+  };
 
   // ----- Near-only details: officers on the bridge and the consoles they work at. -----
   const near = new THREE.Group(); near.visible = false; root.add(near);
@@ -586,53 +762,56 @@ function buildMothership(key) {
     p.phase = r * 10; officers.push(p); near.add(p.group);
   }
 
-  const allMats = [...Object.values(mats), arms.material, hoses.material, lampMesh.material, ...beams.children.map(c => c.material),
-    ...[runLights, roof, farLights, landLights, lipLights, beaconLights, engineGlow, pulse].map(p => p.material)];
+  const allMats = [...Object.values(mats), armMat, hoseMat, turretMat, lampMesh.material, ...beams.children.map(c => c.material), ...bayLightMats,
+    ...[runLights, roof, farLights, beaconLights, engineGlow, pulse, sensors].map(p => p.material)];
   for (const m of allMats) m.userData.baseOpacity = m.opacity;
   D.bridge = new THREE.Vector3(bx, by + bh / 2, bz);
-  D.crewDoor = new THREE.Vector3(xi - 0.6, deckY, D.padZ + 1.6);
+  D.mainBay = mainBay;
 
   // Per-frame animation of this ship's moving parts, and the level of detail.
   let doorOpen = 0;
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v1 = new THREE.Vector3(), v2 = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3();
+  const bcol = beaconLights.geometry.attributes.color;
   function animate(dt, time, { doorWant = 0, camLocal, reduced = false }) {
-    // Level of detail: the fighter-sized bay and the bridge only when close, markings and small parts within about a ship length.
-    const dShip = camLocal.length(), dBay = camLocal.distanceTo(D.bayCenter), dBridge = camLocal.distanceTo(D.bridge);
-    bayGroup.visible = dBay < 400; mats.bayGlow.visible = !bayGroup.visible;
+    // Level of detail: each bay's inside only near it, markings and small parts within about a ship length, the bridge up close.
+    const dShip = camLocal.length(), dBridge = camLocal.distanceTo(D.bridge);
     detail.visible = dShip < L * 1.3 + 300;
     near.visible = dBridge < 90;
     if (!reduced) { beams.rotation.y += dt * 0.5; radar.rotation.y += dt * 0.9; }
     pulse.material.opacity = reduced ? 0.6 : 0.35 + 0.55 * Math.pow(0.5 + 0.5 * Math.sin(time * 1.6), 3);
     runLights.material.opacity = reduced ? 0.85 : 0.7 + 0.2 * Math.sin(time * 1.3);
-    beaconLights.material.opacity = 0.5 + 0.5 * Math.max(0, Math.sin(time * 2.2));
     engineGlow.material.opacity = 0.65 + 0.1 * Math.sin(time * 3.1);
+    // Guide beacons: each bay's four blink in turn, brighter while a fighter is coming in.
+    beacons.forEach((b, i) => { const bay = bays[b.bay], busy = service.slice(bay.first, bay.first + bay.slots).some(s2 => s2.landing);
+      const lvl = reduced ? 0.7 : (busy ? 0.4 + 0.6 * Math.max(0, Math.sin(time * 5 - i * 1.4)) : 0.25 + 0.75 * Math.max(0, Math.sin(time * 2.2 - (i % 4) * 0.9)));
+      const c = new THREE.Color(b.c).multiplyScalar(lvl); bcol.setXYZ(i, c.r, c.g, c.b); });
+    bcol.needsUpdate = true;
     // The refuelling arms and hoses keep time even when nobody is watching (refuelling waits for them); they're only drawn up close.
-    for (const s of service) { s.arm += clamp(s.want - s.arm, -dt * 0.8, dt * 0.8); s.hose += clamp((s.want && s.arm > 0.9 ? 1 : 0) - s.hose, -dt * 1.2, dt * 0.7); }
+    for (const s2 of service) { s2.arm += clamp(s2.want - s2.arm, -dt * 0.8, dt * 0.8); s2.hose += clamp((s2.want && s2.arm > 0.9 ? 1 : 0) - s2.hose, -dt * 1.2, dt * 0.7); }
     doorOpen += clamp(doorWant - doorOpen, -dt * 0.9, dt * 0.9);
-    if (!bayGroup.visible) return;
-    door.position.y = deckY + doorOpen * (DH - 0.2); door.scale.y = 1 - doorOpen * 0.85;
-    const col = landLights.geometry.attributes.color;
-    for (let i = 0; i < slots; i++) for (let j = 0; j < 4; j++) {
-      const on = service[i].landing ? 0.25 + 0.75 * (Math.floor(time * 6 - j) % 4 === 0 ? 1 : 0.15) : 0.35;
-      col.setXYZ(i * 4 + j, on, on * 0.9, on * 0.66);
+    for (const bay of bays) {
+      bay.group.visible = camLocal.distanceTo(bay.center) < 260;
+      if (!bay.group.visible) continue;
+      if (bay.door) { bay.door.position.y = doorOpen * (bay.DH - 0.2); bay.door.scale.y = 1 - doorOpen * 0.85; }
+      const col = bay.land.geometry.attributes.color;
+      for (let i = 0; i < bay.slots; i++) {
+        const s2 = service[bay.first + i], z = bay.slotZ(i);
+        for (let j = 0; j < 4; j++) { const on = s2.landing ? 0.25 + 0.75 * (Math.floor(time * 6 - j) % 4 === 0 ? 1 : 0.15) : 0.35; col.setXYZ(i * 4 + j, on, on * 0.9, on * 0.66); }
+        const drop = 0.25 + smooth(s2.arm) * (BH - 0.6 - 0.68 - 0.25);
+        m4.compose(v1.set(bay.slotX + 0.35, BH - 0.6, z), q.identity(), sc.set(1, drop, 1)); bay.arms.setMatrixAt(i, m4);
+        v1.set(BD - 0.3, 0.5, z - 1.2); v2.set(bay.slotX + 0.9, 0.42, z - 0.4);
+        const dir = v2.sub(v1), len = dir.length(); q.setFromUnitVectors(up, dir.normalize());
+        m4.compose(v1, q, sc.set(1, Math.max(0.001, smooth(s2.hose) * len), 1)); bay.hoses.setMatrixAt(i, m4);
+      }
+      col.needsUpdate = true; bay.arms.instanceMatrix.needsUpdate = bay.hoses.instanceMatrix.needsUpdate = true;
     }
-    col.needsUpdate = true;
-    for (let i = 0; i < slots; i++) {
-      const s = service[i], z = D.slotZ(i);
-      const drop = 0.25 + smooth(s.arm) * (ceilY - 0.6 - (deckY + 0.68) - 0.25);
-      m4.compose(v1.set(D.slotX + 0.35, ceilY - 0.6, z), q.identity(), sc.set(1, drop, 1)); arms.setMatrixAt(i, m4);
-      v1.set(xi - 0.3, deckY + 0.5, z - 1.2); v2.set(D.slotX + 0.9, deckY + 0.42, z - 0.4);
-      const dir = v2.sub(v1), len = dir.length(); q.setFromUnitVectors(up, dir.normalize());
-      m4.compose(v1, q, sc.set(1, Math.max(0.001, smooth(s.hose) * len), 1)); hoses.setMatrixAt(i, m4);
-    }
-    arms.instanceMatrix.needsUpdate = hoses.instanceMatrix.needsUpdate = true;
     if (near.visible && !reduced) for (const p of officers) {
       if (p.seated) p.pose('sit', time + p.phase);
       else { p.pose('stand', time + p.phase); p.group.rotation.y = 0.3 + Math.sin(time * 0.25 + p.phase) * 0.6; }
     }
   }
   function setFade(a) { for (const m of allMats) { m.transparent = a < 1 || m.userData.baseOpacity < 1 || m.blending === THREE.AdditiveBlending || m === farLights.material; m.opacity = m.userData.baseOpacity * a; m.depthWrite = a >= 1 && m.userData.baseOpacity >= 1 && m.blending !== THREE.AdditiveBlending && m !== farLights.material; } }
-  return { key, root, D, service, animate, setFade, mats: allMats };
+  return { key, root, D, service, animate, setFade, mats: allMats, turrets };
 }
 
 // ---------- The fleet ----------
@@ -664,7 +843,7 @@ export function makeFleet(opts) {
     root.add(m);
   }
   inst.canopy.renderOrder = 2;
-  const exhaust = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 1.0, map: tx.glow, color: '#7FC8F0', transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending }));
+  const exhaust = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 2.2, map: tx.glow, color: '#8FD4F8', transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending }));
   exhaust.geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(CAP * 3), 3)); exhaust.frustumCulled = false;
   root.add(exhaust);
   // Far away a fighter is smaller than a pixel, so it shows a small steady navigation light instead.
@@ -801,24 +980,41 @@ export function makeFleet(opts) {
   const toWorld = (lp, out) => out.copy(lp).applyQuaternion(msQ).add(root.position);
   const toLocal = (wp, out) => out.copy(wp).sub(root.position).applyQuaternion(msQi);
   const yawQ = (y, out = new THREE.Quaternion()) => out.setFromAxisAngle(UPV, y);
-  const slotPos = (i, out) => out.set(ms.D.slotX, ms.D.slotY, ms.D.slotZ(i));
-  const padPos = out => out.set(ms.D.slotX, ms.D.slotY, ms.D.padZ);
-  const NOSE_OUT = Math.PI / 2, NOSE_IN = -Math.PI / 2;     // fighter yaw in mothership space: nose to -X (out) or +X (in)
-  function freeSlot() {
+  // Bays: each has its own frame (mouth at x = 0, out is -x, floor at y = 0, spots along z). Slots are numbered across all bays.
+  const NOSE_OUT = Math.PI / 2, NOSE_IN = -Math.PI / 2;     // fighter yaw in a bay's frame: nose out of the mouth (-x) or in (+x)
+  const ref = k => ms.D.slotRefs[k];
+  const L2S = (bay, x, y, z, out) => out.set(x, y, z).applyMatrix4(bay.M);
+  const bayQ = (bay, a, out = new THREE.Quaternion()) => out.copy(bay.Q).multiply(tmpQ3.setFromAxisAngle(UPV, a));
+  const slotPos = (k, out) => { const r = ref(k); return L2S(r.bay, r.bay.slotX, 0, r.bay.slotZ(r.i), out); };
+  const padPos = out => { const b = ms.D.mainBay; return L2S(b, b.slotX, 0, b.padZ, out); };
+  const entryPos = (k, out) => { const r = ref(k); return L2S(r.bay, -42, 3, r.bay.slotZ(r.i), out); };
+  const tmpQ3 = new THREE.Quaternion(), tmpE = new THREE.Vector3(), tmpL = new THREE.Vector3();
+  // A free spot near a point (ship space): nearby bays win, but busy bays count against them and there's a little chance
+  // in it, so landings and launches spread over the whole hull instead of all using the same bay. Any spot if no point.
+  function freeSlot(near = null) {
     if (!ms) return -1;
-    const used = new Set(fighters.map(f => f.slot));
-    for (let i = 0; i < ms.D.slots; i++) if (!used.has(i)) return i;
-    return -1;
+    const used = new Set(fighters.map(f => f.slot)), load = new Map();
+    for (const f of fighters) if (f.slot >= 0) { const b = ref(f.slot).bay; load.set(b, (load.get(b) || 0) + 1); }
+    let best = -1, bd = Infinity;
+    for (let k = 0; k < ms.D.slots; k++) {
+      if (used.has(k)) continue;
+      const d = near ? entryPos(k, tmpE).distanceTo(near) * (0.6 + Math.random() * 0.8) + (load.get(ref(k).bay) || 0) * ms.D.L * 0.15 : Math.random();
+      if (d < bd) { bd = d; best = k; }
+    }
+    return best;
   }
+  const nearestBay = near => ms.D.bays.reduce((a, b) => b.center.distanceTo(near) < a.center.distanceTo(near) ? b : a, ms.D.bays[0]);
   const docked = () => fighters.filter(f => ['docked', 'turn', 'refuel', 'ready', 'board'].includes(f.state)).length;
   const isLocal = f => ['docked', 'turn', 'refuel', 'ready', 'board', 'launch', 'approach', 'rollout'].includes(f.state);
 
   function dock(f, slot, state = 'refuel') {
-    f.slot = slot; f.state = state; slotPos(slot, f.lp); yawQ(NOSE_OUT, f.lq); f.t = 0; f.dur = 7 + Math.random() * 5; f.pilot = false;
+    f.slot = slot; f.state = state; slotPos(slot, f.lp); bayQ(ref(slot).bay, NOSE_OUT, f.lq); f.t = 0; f.dur = 7 + Math.random() * 5; f.pilot = false;
     if (state === 'refuel') f.fuel = Math.min(f.fuel, 0.3);
   }
   function startPatrol(f) { f.state = 'patrol'; f.target = pickPatrol(f); f.lead = null; }
-  function launch(f) { f.state = 'launch'; f.t = 0; f.from.copy(f.lp); f.pilot = true; if (f.slot >= 0) ms.service[f.slot].want = 0; }
+  // Launch straight out of a bay's mouth: from a spot (or the main bay's pad), given in that bay's frame.
+  function launch(f) { const r = ref(f.slot); launchFrom(f, r.bay, r.bay.slotX, r.bay.slotZ(r.i)); ms.service[f.slot].want = 0; }
+  function launchFrom(f, bay, x, z) { f.state = 'launch'; f.t = 0; f.lb = bay; f.from.set(x, 0, z); f.pilot = true; }
   function place(f) {
     // Start somewhere out on patrol, spread over the region.
     f.pos.copy(pickPatrol(f)); f.vel.set(Math.random() - 0.5, (Math.random() - 0.5) * 0.3, Math.random() - 0.5).setLength(f.speed * spdK);
@@ -840,7 +1036,7 @@ export function makeFleet(opts) {
       for (let i = 0; i < target; i++) fighters.push(mk(nextId++));
       for (let i = target; i < fund.total; i++) reserveIds.push(nextId++);
       const nDock = Math.min(ms.D.slots, Math.max(target ? 1 : 0, Math.round(target * 0.25)));
-      fighters.forEach((f, i) => { if (i < nDock) { dock(f, i, i % 2 ? 'ready' : 'refuel'); f.fuel = i % 2 ? 1 : 0.4; f.t = Math.random() * 4; } else place(f); });
+      fighters.forEach((f, i) => { if (i < nDock) { dock(f, freeSlot(), i % 2 ? 'ready' : 'refuel'); f.fuel = i % 2 ? 1 : 0.4; f.t = Math.random() * 4; } else place(f); });   // spread over the bays
       if (reduced) for (const f of fighters) f.thrust = 0;
       if (!first && fund.total > 0) say(fund.total === 1 ? 'New fighter added' : `${fund.total} new fighters added`);
       return;
@@ -886,7 +1082,7 @@ export function makeFleet(opts) {
       for (const f of fighters) if (isLocal(f)) {
         toWorld(f.lp, f.pos);
         if (f.slot >= 0 && f.slot < ms.D.slots && f.state !== 'launch' && f.state !== 'approach' && f.state !== 'rollout') dock(f, f.slot, 'ready');
-        else { f.slot = -1; f.vel.set(0, 0, 0); f.pos.copy(toWorld(tmp.set(ms.D.xo - 30, 0, ms.D.slotZ(0)), tmp2)); startPatrol(f); }
+        else { f.slot = -1; f.vel.set(0, 0, 0); f.pos.copy(toWorld(L2S(ms.D.mainBay, -30, 0, 0, tmp), tmp2)); startPatrol(f); }
       }
       rolling = null;
     }
@@ -926,7 +1122,7 @@ export function makeFleet(opts) {
   }
   function segDist(a, b, c) { const ab = tmp2.copy(b).sub(a), t = clamp(tmp.copy(c).sub(a).dot(ab) / Math.max(ab.lengthSq(), 1e-6), 0, 1); return tmp.copy(a).addScaledVector(ab, t).distanceTo(c); }
 
-  let reduced = false, spdK = 1;
+  let reduced = false, spdK = 1, calmNow = false;
   function moveStation(dt) {
     station.drift += dt;
     const mv = station.move;
@@ -1015,10 +1211,21 @@ export function makeFleet(opts) {
         if (f.state === 'patrol') {
           f.fuel -= dt / f.endurance;
           if (f.lead) { if ((f.pairT -= dt) <= 0 || f.lead.state !== 'patrol') { f.lead = null; f.target = pickPatrol(f); } }
-          if ((f.fuel < 0.18 || f.retire) && !f.lead) { f.state = 'return'; f.slot = freeSlot(); if (f.slot < 0) f.state = 'hold'; for (const g of fighters) if (g.lead === f) g.lead = null; }
+          // Home to the bay nearest to where it is now.
+          if ((f.fuel < 0.18 || f.retire) && !f.lead) { f.state = 'return'; f.slot = freeSlot(toLocal(f.pos, tmpL)); if (f.slot < 0) { f.state = 'hold'; f.t = 0; } for (const g of fighters) if (g.lead === f) g.lead = null; }
         }
         let target, speed = f.speed * spdK;
-        if (f.state === 'patrol') {
+        if (f.threat && (!f.threat.alive || f.state !== 'patrol' || calmNow)) f.threat = null;
+        if (f.state === 'patrol' && f.threat) {
+          // Engaging: hold a stand-off point near the target (on the side away from the player), and fire when lined up and safe.
+          const th = f.threat; cv1.copy(f.pos).sub(th.pos); if (cv1.lengthSq() < 1) cv1.set(0, 1, 0);
+          cv1.applyAxisAngle(UPV, (f.id % 6) * 1.05).y += ((f.id % 3) - 1) * 0.4;   // each fighter its own side, so two never share a spot
+          target = cv1.setLength(70).add(th.pos).clone(); speed = f.speed * spdK * 0.8;
+          if ((f.fireT -= dt) <= 0 && f.pos.distanceTo(th.pos) < 320) {
+            f.fireT = 1.1 + Math.random() * 0.6; const dir = cv2.copy(th.pos).sub(f.pos).normalize(), fw = cv3.set(0, 0, -1).applyQuaternion(f.q);
+            if (fw.dot(dir) > 0.9 && safeShot(f.pos, dir, f.pos.distanceTo(th.pos) + 100)) fireTracer(f.pos.clone().addScaledVector(dir, 3), dir.clone(), 'fighter');
+          }
+        } else if (f.state === 'patrol') {
           if (f.lead) { target = tmp2.set(4.5, 0, 3).applyQuaternion(f.lead.q).add(f.lead.pos).clone(); speed = f.lead.speed * spdK * 1.15; }
           else {
             if (f.pos.distanceTo(f.target) < 18) {
@@ -1030,17 +1237,18 @@ export function makeFleet(opts) {
           }
         } else if (f.state === 'hold') {
           // No free bay yet: wait a little way out from the mouth.
-          target = toWorld(tmp2.set(D.xo - 70 - (f.id % 3) * 14, D.deckY + 3 - (f.id % 6) * 8, D.hz + ((f.id % 5) - 2) * 16), new THREE.Vector3()); speed = 9;
-          if ((f.t += dt) > 1) { f.t = 0; const s = freeSlot(); if (s >= 0) { f.slot = s; f.state = 'return'; } }
+          const hb = nearestBay(toLocal(f.pos, tmpL));
+          target = toWorld(L2S(hb, -70 - (f.id % 3) * 14, 3 - (f.id % 6) * 6, ((f.id % 5) - 2) * 10, tmp2), new THREE.Vector3()); speed = 9;
+          if ((f.t += dt) > 1) { f.t = 0; const s = freeSlot(toLocal(f.pos, tmpL)); if (s >= 0) { f.slot = s; f.state = 'return'; } }
         } else if (!(f.slot >= 0 && f.slot < D.slots)) { f.state = 'hold'; f.slot = -1; f.t = 0; return; }
         else {
           // Coming home: aim for a point straight out from the bay's mouth.
-          target = toWorld(tmp2.set(D.xo - 42, D.slotY + 3, D.slotZ(f.slot)), new THREE.Vector3());
+          target = toWorld(entryPos(f.slot, tmp2), new THREE.Vector3());
           if (f.pos.distanceTo(target) < 9) {
             f.state = 'approach'; f.t = 0; f.dur = 8; ms.service[f.slot].landing = true;
             toLocal(f.pos, f.from); f.lq.copy(msQi).multiply(f.q);
             const dirL = tmp.copy(f.vel).applyQuaternion(msQi).normalize();
-            f.c1.copy(f.from).addScaledVector(dirL, 12); f.c2.set(D.xo - 10, D.slotY + 0.6, D.slotZ(f.slot));
+            const rr = ref(f.slot); f.c1.copy(f.from).addScaledVector(dirL, 12); L2S(rr.bay, -10, 0.6, rr.bay.slotZ(rr.i), f.c2);
             f.lp.copy(f.from); f.walk = 0;
             return;
           }
@@ -1058,13 +1266,13 @@ export function makeFleet(opts) {
         const aim = new THREE.Quaternion().setFromRotationMatrix(lookM.lookAt(tmp.set(0, 0, 0), d.normalize(), UPV));
         f.lq.slerp(aim, clamp(dt * 3, 0, 1));
         f.thrust = 1 - u;
-        if (u >= 1) { f.state = 'turn'; f.t = 0; ms.service[f.slot].landing = false; f.lq.copy(yawQ(NOSE_IN)); }
+        if (u >= 1) { f.state = 'turn'; f.t = 0; ms.service[f.slot].landing = false; bayQ(ref(f.slot).bay, NOSE_IN, f.lq); }
         break;
       }
       case 'turn': {
         // The bay's turntable turns the fighter round to face the mouth again.
         f.t += dt; const u = smooth(clamp(f.t / 2.2, 0, 1)); f.thrust = 0;
-        yawQ(NOSE_IN + Math.PI * u, f.lq);
+        bayQ(ref(f.slot).bay, NOSE_IN + Math.PI * u, f.lq);
         if (u >= 1) {
           if (f.retire) { ms.service[f.slot].want = 0; fighters.splice(fighters.indexOf(f), 1); return; }
           f.state = 'refuel'; f.t = 0; f.dur = 8 + Math.random() * 4; f.pilot = false; ms.service[f.slot].want = 1;
@@ -1095,10 +1303,11 @@ export function makeFleet(opts) {
         break;
       }
       case 'launch': {
-        f.t += dt; const a = 4.5, x = f.from.x - 0.5 * a * f.t * f.t, out = Math.max(0, D.xo - x);
-        f.lp.set(x, f.from.y + out * 0.12, f.from.z); yawQ(NOSE_OUT, f.lq).multiply(tmpQ.setFromAxisAngle(tmp.set(1, 0, 0), Math.min(0.12, out * 0.01)));
+        // Straight out along the bay's lane, gently at first (more gently still in calm space).
+        f.t += dt; const a = calmNow ? 1.6 : 4.5, x = f.from.x - 0.5 * a * f.t * f.t, out = Math.max(0, -x);
+        L2S(f.lb, x, f.from.y + out * 0.12, f.from.z, f.lp); bayQ(f.lb, NOSE_OUT, f.lq).multiply(tmpQ.setFromAxisAngle(tmp.set(1, 0, 0), Math.min(0.12, out * 0.01)));
         f.thrust = 1;
-        if (x < D.xo - 26) {
+        if (x < -26) {
           toWorld(f.lp, f.pos); f.q.copy(msQ).multiply(f.lq);
           f.vel.set(0, 0, -1).applyQuaternion(f.q).multiplyScalar(a * f.t);
           f.slot = -1; startPatrol(f);
@@ -1108,20 +1317,205 @@ export function makeFleet(opts) {
       case 'rollout': {
         // A new fighter: the shutter opens, it rolls out of the assembly bay, turns to face space, the pilot waves, sparkles.
         f.t += dt; const T1 = 1.2, T2 = T1 + 3.6, T3 = T2 + 1.4, T4 = T3 + 3.2;
-        const from = tmp.set(D.slotX, D.slotY, D.zA), pad = padPos(tmp2.clone());
-        if (f.t < T2) { const u = smooth(clamp((f.t - T1) / (T2 - T1), 0, 1)); f.lp.lerpVectors(from, pad, u); yawQ(0, f.lq); }
+        const mb = ms.D.mainBay, from = L2S(mb, mb.slotX, 0, mb.zA, tmp), pad = padPos(tmp2.clone());
+        if (f.t < T2) { const u = smooth(clamp((f.t - T1) / (T2 - T1), 0, 1)); f.lp.lerpVectors(from, pad, u); bayQ(mb, 0, f.lq); }
         else { if (!f.cheered) { f.cheered = true; burst(tmp.copy(pad)); }
-          f.lp.copy(pad); yawQ(NOSE_OUT * smooth(clamp((f.t - T2) / (T3 - T2), 0, 1)), f.lq); }
+          f.lp.copy(pad); bayQ(mb, NOSE_OUT * smooth(clamp((f.t - T2) / (T3 - T2), 0, 1)), f.lq); }
         f.thrust = 0;
-        if (f.t > T4) { f.pilot = true; rolling = null; f.from.copy(f.lp); f.state = 'launch'; f.t = 0; f.slot = -1; }
+        if (f.t > T4) { f.pilot = true; rolling = null; f.slot = -1; launchFrom(f, mb, mb.slotX, mb.padZ); }
         break;
       }
     }
   }
 
+  // ----- Weapons: soft tracer bolts, missiles with smoke, practice drones, and the interception hook -----
+  // Everything here lives in universe space, in `fx` (space.js adds it to the world). Pools are fixed in size and reused.
+  // The guns only ever fire at threats (practice drones now, asteroids later), and only when the line of fire points away
+  // from the player's ship and every planet, misses every fighter, and doesn't cross the mothership's own hull.
+  const fx = new THREE.Group(); fx.name = 'fleet-fx';
+  const glowMat = (color, size, o = {}) => new THREE.PointsMaterial({ size, map: tx.glow, color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, ...o });
+  const pool = (n, size, color, alpha = false) => {
+    const g = new THREE.BufferGeometry(), pos = new Float32Array(n * 3), col = new Float32Array(n * (alpha ? 4 : 3));
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, alpha ? 4 : 3)); g.setDrawRange(0, 0);
+    const p = new THREE.Points(g, glowMat('#FFFFFF', size, { vertexColors: true, blending: alpha ? THREE.NormalBlending : THREE.AdditiveBlending })); p.frustumCulled = false; fx.add(p);
+    return { p, g, pos, col, items: [] };
+  };
+  // Tracer bolts: short glowing streaks, instanced.
+  const TRC = 160, tracerMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: '#FFFFFF', transparent: true, opacity: 0.85, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }), TRC);
+  tracerMesh.frustumCulled = false; tracerMesh.count = 0; tracerMesh.setColorAt(0, new THREE.Color()); fx.add(tracerMesh);
+  const tracers = [];
+  // Missiles: small dark bodies with a soft exhaust glow, leaving grey smoke.
+  const MSL = 24, missileGeo = mergeGeometries([cylG(0.3, 0.3, 2.4, 8).rotateX(Math.PI / 2), new THREE.ConeGeometry(0.3, 0.8, 8).rotateX(-Math.PI / 2).translate(0, 0, -1.6).toNonIndexed(), boxG(0.9, 0.05, 0.4).translate(0, 0, 1.0), boxG(0.05, 0.9, 0.4).translate(0, 0, 1.0)].map(g => (g.index ? g.toNonIndexed() : g)));
+  const missileMesh = new THREE.InstancedMesh(missileGeo, new THREE.MeshStandardMaterial({ color: '#3A3F44', roughness: 0.6, emissive: '#1C2024' }), MSL);
+  missileMesh.frustumCulled = false; missileMesh.count = 0; fx.add(missileMesh);
+  const missiles = [], smoke = pool(900, 5, '#FFFFFF', true), sparks = pool(360, 1.6, '#FFFFFF'), glows = pool(64, 3.5, '#FFFFFF');
+  // Practice drones: small orange-lit targets that drift around a training zone.
+  const DRN = 12, droneMesh = new THREE.InstancedMesh(mergeGeometries([new THREE.OctahedronGeometry(1.6, 0), new THREE.TorusGeometry(2.0, 0.18, 6, 16).rotateX(Math.PI / 2).toNonIndexed()].map(g => (g.index ? g.toNonIndexed() : g))),
+    new THREE.MeshStandardMaterial({ color: '#4A4F55', roughness: 0.5, emissive: '#FF8A5A', emissiveIntensity: 0.35, flatShading: true }), DRN);
+  droneMesh.frustumCulled = false; droneMesh.count = 0; fx.add(droneMesh);
+  const droneLights = pool(DRN, 4, '#FF9A6A');
+  const threats = [], stats = { hits: 0, kills: 0, missiles: 0 };          // threats: { pos, vel, radius, hp, kind, alive, load, cap, zone, t }
+  const segD = (a, b, c) => { const ab = cv1.copy(b).sub(a), t = clamp(cv2.copy(c).sub(a).dot(ab) / Math.max(ab.lengthSq(), 1e-6), 0, 1); return cv2.copy(a).addScaledVector(ab, t).distanceTo(c); };
+  const cv1 = new THREE.Vector3(), cv2 = new THREE.Vector3(), cv3 = new THREE.Vector3(), cv4 = new THREE.Vector3(), cq = new THREE.Quaternion(), cm = new THREE.Matrix4(), ZF = new THREE.Vector3(0, 0, -1);
+  // Is it safe to fire from p (universe) along dir (unit) for len? Away from the player, the planets and every fighter, not through our hull.
+  function safeShot(p, dir, len) {
+    cv3.copy(opts.shipPos).sub(p); const dp = cv3.length();
+    if (dir.dot(cv3) / Math.max(dp, 1e-6) > 0.5) return false;                                          // never toward the player's ship (within 60°)
+    cv4.copy(p).addScaledVector(dir, len);
+    if (segD(p, cv4, opts.shipPos) < opts.shipRadius + 150) return false;
+    for (const pl of opts.planets()) { cv3.copy(pl.group.position).sub(p); if (dir.dot(cv3.normalize()) > 0.85 || segD(p, cv4, pl.group.position) < opts.clearance(pl) + 50) return false; }
+    for (const f of fighters) if (!isLocal(f) && segD(p, cv4, f.pos) < 15) return false;
+    if (ms) { toLocal(cv3.copy(p).addScaledVector(dir, 3), ra); toLocal(cv4.copy(p).addScaledVector(dir, Math.min(len, 600)), rb); if (segHits(ra, rb)) return false; }
+    return true;
+  }
+  function fireTracer(p, dir, kind) {
+    if (tracers.length >= TRC) return;
+    const sp = kind === 'heavy' ? 420 : kind === 'pd' ? 520 : 380, size = kind === 'heavy' ? Math.max(0.35, ms.turrets.TS * 0.18) : 0.22;
+    tracers.push({ pos: p.clone(), vel: dir.clone().multiplyScalar(sp), life: 3.2, max: 3.2, len: kind === 'heavy' ? 9 : 5, w: size, dmg: kind === 'heavy' ? 2 : 1,
+      color: new THREE.Color(kind === 'heavy' ? '#9FF0D0' : kind === 'pd' ? '#FFE6A8' : '#9FD8FF') });
+    puff(glows, p, kind === 'heavy' ? '#BFF5DF' : '#FFF0C8', 0.25, 0, 0.7);
+  }
+  function fireMissile(p, dir, target) {
+    if (missiles.length >= MSL) return;
+    missiles.push({ pos: p.clone(), vel: dir.clone().multiplyScalar(40), target, life: 14, smokeT: 0 }); stats.missiles++;
+    puff(glows, p, '#FFD9A8', 0.35, 0, 0.6);
+  }
+  // Add a particle to a pool: smoke drifts and grows dim, sparks fly out, glows fade fast. Never a harsh flash.
+  function puff(P, p, color, life, speed = 0, alpha = 1) {
+    if (P.items.length >= P.pos.length / 3) P.items.shift();
+    const v = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(speed * (0.4 + Math.random() * 0.6));
+    P.items.push({ pos: p.clone(), vel: v, age: 0, life, color: new THREE.Color(color), alpha });
+  }
+  function burstAt(p, big) { for (let i = 0; i < (big ? 40 : 14); i++) puff(sparks, p, i % 3 ? '#FFC98A' : '#FFF2D8', 0.8 + Math.random() * 0.7, big ? 22 : 12, 1); puff(glows, p, '#FFD9A8', 0.9, 0, big ? 0.9 : 0.5); }
+  function stepPool(P, dt, smokeLike) {
+    let n = 0;
+    for (let i = P.items.length - 1; i >= 0; i--) { const it = P.items[i]; it.age += dt; if (it.age >= it.life) P.items.splice(i, 1); }
+    for (const it of P.items) {
+      it.pos.addScaledVector(it.vel, dt); it.vel.multiplyScalar(Math.exp(-dt * (smokeLike ? 0.6 : 1.8)));
+      const k = 1 - it.age / it.life;
+      P.pos.set([it.pos.x, it.pos.y, it.pos.z], n * 3);
+      if (smokeLike) P.col.set([it.color.r, it.color.g, it.color.b, k * 0.45 * it.alpha], n * 4); else P.col.set([it.color.r * k * it.alpha, it.color.g * k * it.alpha, it.color.b * k * it.alpha], n * 3);
+      n++;
+    }
+    P.g.setDrawRange(0, n); P.g.attributes.position.needsUpdate = P.g.attributes.color.needsUpdate = true;
+  }
+  // The interception hook. Anything dangerous (practice drones now, asteroids later) is handed in here; turrets, missile
+  // batteries and fighters all engage it, and bigger targets draw more firepower (more turrets and fighters at once).
+  function intercept({ pos, vel = new THREE.Vector3(), radius = 2, hp = 4, kind = 'asteroid' }) {
+    const th = { pos: pos.clone(), vel: vel.clone(), radius, hp, kind, alive: true, load: 0, cap: clamp(Math.ceil(radius / 2) * 3, 3, 24), t: 0, wander: pos.clone() };
+    threats.push(th);
+    // Fighters: one per few units of size (at least one), from those out on patrol, nearest first.
+    const nF = kind === 'drone' ? (threats.filter(x => x.kind === 'drone').length <= 2 ? 1 : 0) : clamp(Math.ceil(radius / 8), 1, 6);
+    fighters.filter(f => f.state === 'patrol' && !f.threat && f.fuel > 0.35).sort((a, b) => a.pos.distanceTo(pos) - b.pos.distanceTo(pos)).slice(0, nF).forEach(f => { f.threat = th; f.lead = null; f.fireT = 1 + Math.random(); });
+    return th;
+  }
+  // Practice drill: a few drones in a training zone beyond the mothership, on the side away from the player and the planets.
+  let drill = null, drillT = 90 + Math.random() * 90;
+  function startDrill() {
+    if (!ms) return false;
+    const L0 = ms.D.L, out = root.position.clone().normalize(), awayShip = root.position.clone().sub(opts.shipPos).normalize();
+    for (let tries = 0; tries < 20; tries++) {
+      const dir = out.clone().add(awayShip).add(new THREE.Vector3(Math.random() - 0.5, 0.3 + Math.random() * 0.3, Math.random() - 0.5).multiplyScalar(0.8)).normalize();
+      const zone = root.position.clone().addScaledVector(dir, L0 * 0.8 + 320);
+      if (zone.distanceTo(opts.shipPos) < 700 || opts.planets().some(pl => zone.distanceTo(pl.group.position) < opts.clearance(pl) + 400)) continue;
+      const n = 4 + Math.floor(Math.random() * 4);
+      drill = { zone, t: 0, drones: [] };
+      // Tougher drones for bigger ships, so a drill lasts long enough to watch on every tier.
+      const hp = 6 + ms.turrets.list.length / 4;
+      for (let i = 0; i < n; i++) drill.drones.push(intercept({ pos: zone.clone().add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(160)), radius: 2.2, hp, kind: 'drone' }));
+      for (const d of drill.drones) d.zone = zone;
+      return true;
+    }
+    return false;
+  }
+  let combatOn = false;
+  function stepCombat(dt, { calm, near }) {
+    // Drills: now and then, only when the camera is near enough to see them, never in calm space.
+    if (!calm && ms && near && !drill && !threats.length && (drillT -= dt) <= 0) { startDrill(); drillT = 120 + Math.random() * 150; }
+    if (drill) { drill.t += dt; if (drill.drones.every(d => !d.alive) || drill.t > 80) { for (const d of drill.drones) if (d.alive) { d.alive = false; puff(glows, d.pos, '#FFB08A', 0.8, 0, 0.4); } drill = null; } }
+    // Threats move: drones wander around their zone.
+    for (const th of threats) {
+      if (!th.alive) continue; th.t += dt;
+      if (th.kind === 'drone') { if (th.pos.distanceTo(th.wander) < 10 || th.t > 8) { th.t = 0; th.wander.copy(th.zone).add(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(220)); }
+        cv1.copy(th.wander).sub(th.pos).setLength(16); th.vel.lerp(cv1, 1 - Math.exp(-dt * 0.8)); }
+      th.pos.addScaledVector(th.vel, dt);
+    }
+    for (let i = threats.length - 1; i >= 0; i--) if (!threats[i].alive) { threats[i].load = 0; threats.splice(i, 1); }
+    // Turrets: pick a target in range (spreading the load), lead it, and fire when lined up and safe.
+    if (ms && near) {
+      const T = ms.turrets, range = { heavy: 1400 + ms.D.L, pd: 600 + ms.D.L * 0.5, missile: 2400 + ms.D.L };
+      // Guns and missile batteries each have their own share of a target, so both always join in.
+      for (const th of threats) { th.load = 0; th.mload = 0; }
+      for (const tt of T.list) if (tt.target?.alive) tt.target[tt.kind === 'missile' ? 'mload' : 'load']++; else tt.target = null;
+      T.update(dt, time, { calm, want: tt => {
+        if (calm) return null;
+        tt.retarget = (tt.retarget || 0) - dt;
+        const tw = toWorld(tt.pos, cv1);
+        if (!tt.target && tt.retarget <= 0 && threats.length) {
+          tt.retarget = 0.6;
+          let best = null, bd = Infinity;
+          const mis = tt.kind === 'missile';
+          // Only targets it can see: in range and above its own horizon (a gun under the hull can't shoot over it).
+          for (const th of threats) { const d = th.pos.distanceTo(tw); if (th.alive && d < range[tt.kind] && (mis ? (th.mload || 0) < Math.max(2, th.cap / 3) : th.load < th.cap) && d < bd
+            && T.aimAt(tt, toLocal(th.pos, cv3)).pitch > 0.1) { bd = d; best = th; } }
+          if (best) { tt.target = best; if (mis) best.mload = (best.mload || 0) + 1; else best.load++; }
+        }
+        if (!tt.target) return null;
+        if (T.aimAt(tt, toLocal(tt.target.pos, cv3)).pitch < 0.05) { tt.target = null; return null; }   // it slipped below the horizon
+        const d = tt.target.pos.distanceTo(tw), lead = d / (tt.kind === 'missile' ? 200 : tt.kind === 'heavy' ? 420 : 520);
+        const aimW = cv2.copy(tt.target.pos).addScaledVector(tt.target.vel, lead);
+        return T.aimAt(tt, toLocal(aimW, cv3));
+      } });
+      if (!calm) for (const tt of T.list) {
+        tt.cd -= dt;
+        if (!tt.target || tt.cd > 0 || tt.aimErr > 0.06 || tt.pitch < 0.05) continue;
+        const pL = T.muzzle(tt, new THREE.Vector3(), cv4), dirW = cv4.clone().applyQuaternion(msQ).normalize(), pW = toWorld(pL, new THREE.Vector3());
+        const len = tt.target.pos.distanceTo(pW) + 200;
+        if (!safeShot(pW, dirW, len)) { tt.cd = 0.5; continue; }
+        if (tt.kind === 'missile') fireMissile(pW, dirW, tt.target); else fireTracer(pW, dirW, tt.kind);
+        tt.cd = tt.K.cool * (0.8 + Math.random() * 0.4);
+      }
+    }
+    // Tracers fly straight, fade at the end, and stop at the first threat they reach.
+    for (let i = tracers.length - 1; i >= 0; i--) {
+      const b = tracers[i]; b.pos.addScaledVector(b.vel, dt); b.life -= dt;
+      let hit = false;
+      for (const th of threats) if (th.alive && th.pos.distanceTo(b.pos) < th.radius + 2) { th.hp -= b.dmg; hit = true; stats.hits++; puff(sparks, b.pos, '#FFE0B0', 0.5, 8, 0.8); if (th.hp <= 0) { th.alive = false; stats.kills++; burstAt(th.pos, th.radius > 4); } break; }
+      if (hit || b.life <= 0) tracers.splice(i, 1);
+    }
+    // Missiles: speed up, turn toward their target, trail smoke; if the target is gone they fly on and fade out.
+    for (let i = missiles.length - 1; i >= 0; i--) {
+      const m = missiles[i]; m.life -= dt;
+      const sp = Math.min(240, m.vel.length() + 90 * dt);
+      if (m.target?.alive) { cv1.copy(m.target.pos).sub(m.pos).normalize(); cv2.copy(m.vel).normalize(); const a = Math.min(1, 2.2 * dt / Math.max(0.01, cv2.angleTo(cv1))); cv2.lerp(cv1, a).normalize(); m.vel.copy(cv2).multiplyScalar(sp); }
+      else m.vel.setLength(sp);
+      m.pos.addScaledVector(m.vel, dt);
+      if ((m.smokeT -= dt) <= 0) { m.smokeT = 0.035; puff(smoke, cv1.copy(m.vel).setLength(-1.8).add(m.pos), '#B8BCC2', 2.6, 1.5, 1); }
+      if (m.target?.alive && m.pos.distanceTo(m.target.pos) < m.target.radius + 3) { m.target.hp -= 3; stats.hits++; burstAt(m.pos, false); if (m.target.hp <= 0) { m.target.alive = false; stats.kills++; burstAt(m.target.pos, m.target.radius > 4); } missiles.splice(i, 1); continue; }
+      if (m.life <= 0) { puff(glows, m.pos, '#FFD9A8', 0.6, 0, 0.4); missiles.splice(i, 1); }
+    }
+    // Draw everything.
+    tracerMesh.count = tracers.length;
+    tracers.forEach((b, i) => { cq.setFromUnitVectors(ZF, cv1.copy(b.vel).normalize()); const k = Math.min(1, b.life / 0.4);
+      cm.compose(b.pos, cq, cv2.set(b.w, b.w, b.len * k)); tracerMesh.setMatrixAt(i, cm); tracerMesh.setColorAt(i, b.color); });
+    tracerMesh.instanceMatrix.needsUpdate = true; if (tracerMesh.instanceColor) tracerMesh.instanceColor.needsUpdate = true;
+    missileMesh.count = missiles.length;
+    missiles.forEach((m, i) => { cq.setFromUnitVectors(ZF, cv1.copy(m.vel).normalize()); cm.compose(m.pos, cq, cv2.set(1, 1, 1)); missileMesh.setMatrixAt(i, cm); puff(glows, cv1.copy(m.vel).setLength(-1.4).add(m.pos), '#FFD9A8', 0.08, 0, 0.5); });
+    missileMesh.instanceMatrix.needsUpdate = true;
+    const drones = threats.filter(t2 => t2.kind === 'drone' && t2.alive);
+    droneMesh.count = Math.min(DRN, drones.length);
+    drones.slice(0, DRN).forEach((d, i) => { cm.compose(d.pos, cq.setFromAxisAngle(UPV, time * 0.8 + i), cv2.set(1, 1, 1)); droneMesh.setMatrixAt(i, cm);
+      droneLights.pos.set([d.pos.x, d.pos.y + 2.2, d.pos.z], i * 3); const on = 0.4 + 0.6 * Math.max(0, Math.sin(time * 2 + i)); droneLights.col.set([on, on * 0.6, on * 0.4], i * 3); });
+    droneMesh.instanceMatrix.needsUpdate = true; droneLights.g.setDrawRange(0, droneMesh.count); droneLights.g.attributes.position.needsUpdate = droneLights.g.attributes.color.needsUpdate = true;
+    stepPool(smoke, dt, true); stepPool(sparks, dt, false); stepPool(glows, dt, false);
+    combatOn = threats.length > 0 || tracers.length > 0 || missiles.length > 0;
+  }
+
   // ----- Every frame -----
   const camLocal = new THREE.Vector3();
-  function update(dt, { camera, reduced: red = false }) {
+  // calm: calm space or reduced motion. The guns hold still and fire nothing, there are no drills, fighters launch slowly.
+  function update(dt, { camera, reduced: red = false, calm = false }) {
+    calmNow = calm || red;
     reduced = red;
     time += dt;
     const fdt = reduced ? dt * 0.15 : dt;
@@ -1133,7 +1527,7 @@ export function makeFleet(opts) {
     root.updateMatrixWorld();
     const camD = camera.position.distanceTo(root.position);
     toLocal(camera.position, camLocal);
-    const nearHangar = camLocal.distanceTo(ms.D.bayCenter) < 300;
+    const nearHangar = ms.D.bays.some(b => camLocal.distanceTo(b.center) < 300);
 
     // Keep the right number flying: promote reserves, start the next rollout.
     const want = Math.min(MAX_ACTIVE, fund.total);
@@ -1157,19 +1551,25 @@ export function makeFleet(opts) {
       if (f.slot >= 0 && f.state !== 'patrol' && !isLocal(f)) { /* still heading home */ }
     }
     ms.animate(fdt, time, { doorWant: rolling && rolling.t < 4.8 ? 1 : 0, camLocal, reduced });
+    // Guns and drills only while the camera is near enough to see them; far away the guns' barrels are left out.
+    const nearGuns = camD < ms.D.L * 2.5 + 800;
+    ms.turrets.setNear(camD < ms.D.L * 3 + 600);
+    if (nearGuns || combatOn) stepCombat(fdt, { calm: calmNow, near: nearGuns });
 
     // Hangar crew: a pilot walking to each fighter that's boarding, and the new fighter's pilot waving.
     let ci = 0;
     if (nearHangar) for (const f of fighters) {
       if (ci >= crew.length) break;
-      if (f.state === 'board') {
-        const p = crew[ci++], u = smooth(clamp(f.t / 3, 0, 1)), door = ms.D.crewDoor, to = tmp.set(f.lp.x + 0.5, ms.D.deckY, f.lp.z - 1.0);
-        p.group.position.lerpVectors(door, to, u); p.group.position.y = ms.D.deckY;
+      if (f.state === 'board' && f.slot >= 0) {
+        // From the bay's crew door to the fighter's side, in that bay's frame.
+        const r = ref(f.slot), b = r.bay; if (camLocal.distanceTo(b.center) > 300) continue;
+        const p = crew[ci++], u = smooth(clamp(f.t / 3, 0, 1)), door = L2S(b, b.crewDoor.x, 0, b.crewDoor.z, new THREE.Vector3()), to = L2S(b, b.slotX + 0.5, 0, b.slotZ(r.i) - 1.0, tmp);
+        p.group.position.lerpVectors(door, to, u);
         p.group.rotation.y = Math.atan2(-(to.x - door.x), -(to.z - door.z)); p.pose('walk', time); p.group.visible = u < 0.98;
       } else if (f.state === 'rollout' && f.t > 4.8) {
-        const p = crew[ci++], pad = padPos(tmp.clone()); p.group.visible = true;
-        p.group.position.set(pad.x - 0.6, ms.D.deckY, pad.z - 1.9); p.group.rotation.y = Math.PI * 0.75;
-        if (f.t < 8.2) p.pose('wave', time); else { p.pose('walk', time); p.group.position.z += (f.t - 8.2) * 0.8; }
+        const b = ms.D.mainBay, p = crew[ci++]; p.group.visible = true;
+        L2S(b, b.slotX - 0.6, 0, b.padZ - 1.9 + Math.max(0, f.t - 8.2) * 0.8, p.group.position); p.group.rotation.y = b.theta + Math.PI * 0.75;
+        if (f.t < 8.2) p.pose('wave', time); else p.pose('walk', time);
       }
     }
     for (; ci < crew.length; ci++) crew[ci].group.visible = false;
@@ -1208,7 +1608,7 @@ export function makeFleet(opts) {
     let spare = reserveIds.length;
     for (let i = ms.D.slots - 1; i >= 0 && spare > 0; i--) {
       if (used.has(i)) continue;
-      spare--; toWorld(slotPos(i, wpos), wpos); wq.copy(msQ).multiply(yawQ(NOSE_OUT, tmpQ2));
+      spare--; toWorld(slotPos(i, wpos), wpos); wq.copy(msQ).multiply(bayQ(ref(i).bay, NOSE_OUT, tmpQ2));
       draw(wpos, wq, reserveIds[spare], false, 0);
     }
     for (const k of ['body', 'dark', 'stripe', 'glow', 'lights', 'canopy']) { inst[k].count = n; inst[k].instanceMatrix.needsUpdate = true; }
@@ -1236,9 +1636,14 @@ export function makeFleet(opts) {
   }
   const debug = {
     relocate: () => pickStation(station.pos.clone()), fighters, station, cells, hullDist, hullNormal, get ms() { return ms; },
+    drill: () => { drillT = 0; return startDrill(); }, threats, tracers, missiles, stats,
+    // For testing: park a patrolling fighter in each of these bays and send it straight back out.
+    launchFrom: bayIdx => { for (const bi of bayIdx) { const b = ms.D.bays[bi], used = new Set(fighters.map(f => f.slot)); let k = -1;
+      for (let i = 0; i < b.slots; i++) if (!used.has(b.first + i)) { k = b.first + i; break; }
+      const f = fighters.find(g => g.state === 'patrol' && !g.threat); if (k < 0 || !f) continue; dock(f, k, 'ready'); f.fuel = 1; f.state = 'board'; f.t = 3.1; } },
     roll: (n = 1) => { rollQueue += n; },
   };
   // How far out anything might need to go to see the fleet (for the free camera's range).
   const reach = () => ms ? station.pos.length() + ms.D.L * 0.8 : 0;
-  return { root, setFund, update, keepClear, blocks, info, get reach() { return reach(); }, debug, get present() { return !!ms; }, get size() { return ms?.D; }, get yaw() { return station.yaw; }, quaternion: msQ, toWorld };
+  return { root, fx, intercept, setFund, update, keepClear, blocks, info, get reach() { return reach(); }, debug, get present() { return !!ms; }, get size() { return ms?.D; }, get yaw() { return station.yaw; }, quaternion: msQ, toWorld };
 }

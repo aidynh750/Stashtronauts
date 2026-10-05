@@ -64,6 +64,8 @@ scene.add(universe); universe.add(camera);
 const camWorld = new THREE.Vector3(), lookTmp = new THREE.Vector3();
 const camLookAt = v => camera.lookAt(lookTmp.copy(v).add(universe.position));   // lookAt wants world space
 let baseFov = 60;
+// Calm space (a console setting, and always on with reduced motion): the guardian fleet's guns hold still and fire nothing.
+let calmSpace = false;
 // What the air around the ship is doing (filled in by atmosphere.js each frame; see makeAirFX below).
 let air = { maxSpeed: Infinity, flare: 0, shake: new THREE.Vector3(), fov: 0, starFade: 1, layer: null };
 const coarse = matchMedia('(pointer: coarse)').matches; // phones and tablets get fewer pixels to draw
@@ -527,7 +529,7 @@ universe.add(ship.root); scene.add(...ship.world);   // the trail and tow pod ar
 // The emergency fund's guardian fleet: a mothership and its fighters, far from everything.
 const fleet = makeFleet({ planets: () => planets, clearance: p => autoClear(p), shipPos: ship.root.position, shipRadius: ship.radius,
   volume: () => volume, toast: msg => toast(msg) });
-universe.add(fleet.root);
+universe.add(fleet.root, fleet.fx);   // the mothership, and its tracers, missiles, smoke and practice drones
 const airFX = makeAirFX({ universe, camera, shipRadius: ship.radius });
 // Speeds suit the big world: a comfortable top speed, and Shift ramps up to a fast cruise for crossing between planets.
 const MAX_SPEED = 70, MAX_BACK = 15, MAX_CLIMB = 25, TURN_RATE = 0.9, BOOST_MAX = 1500;
@@ -1059,6 +1061,7 @@ function refreshShip(examples, first = false) {
     info = { totalSaved: EXAMPLES.reduce((t, e) => t + e.amount, 0) + EXAMPLE_FUND, goals: EXAMPLES.map(e => ({ id: e.id, name: e.label, progress: e.progress })),
       emergencyMonths: EXAMPLE_FUND / 2000, emergencyAmount: EXAMPLE_FUND, hasEmergencyFund: true, debt: 0, towPod: false };
   } else info = shipMoney(load());
+  calmSpace = !!load().ship?.calmSpace;
   fleet.setFund({ has: info.hasEmergencyFund, amount: info.emergencyAmount, months: info.emergencyMonths, unit: load().ship?.fighterUnit || 100, first });
   updateFleetHud();
   info.shipName = load().ship?.name || '';
@@ -1156,7 +1159,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   if (dialogOpen()) keys.clear(); // no flying while the console is open
   fly(dt);
-  try { fleet.update(dt, { camera, reduced }); } catch (e) { console.error(e); }   // a fleet hiccup must never stop the whole scene
+  try { fleet.update(dt, { camera, reduced, calm: calmSpace }); } catch (e) { console.error(e); }   // a fleet hiccup must never stop the whole scene
   follow(dt);
   air = airFX.update(dt, { planets, shipPos: ship.root.position, reduced, speed: Math.abs(flight.speed), following: !fleetView() && view.mode !== 'free' });
   // In the clouds: a soft shake and a faint shimmer (both zero with reduced motion), only for the follow camera.
