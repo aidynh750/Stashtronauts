@@ -61,6 +61,20 @@ function limb(r0, r1, len, seg = 18) {
     return new THREE.LatheGeometry(pts.reverse(), seg);
   });
 }
+// A fuller limb: radius r0 at the joint, swelling to `bulge` a third of the way down, narrowing to r1. Rounded ends.
+function fullLimb(r0, bulge, r1, len, seg = 20) {
+  return cached(`full${r0}|${bulge}|${r1}|${len}`, () => {
+    const pts = [new THREE.Vector2(0, -len - r1)];
+    for (let i = 1; i <= 5; i++) { const a = -PI / 2 + (i / 5) * PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r1, -len + Math.sin(a) * r1)); }
+    for (let i = 1; i < 10; i++) {
+      const t = 1 - i / 10, y = -t * len;                                  // from the bottom up
+      const r = t > 0.33 ? lerp(bulge, r1, (t - 0.33) / 0.67) ** 1 : lerp(r0, bulge, Math.sin(t / 0.33 * PI / 2));
+      pts.push(new THREE.Vector2(r, y));
+    }
+    for (let i = 0; i <= 5; i++) { const a = (i / 5) * PI / 2; pts.push(new THREE.Vector2(Math.cos(a) * r0, Math.sin(a) * r0)); }
+    return new THREE.LatheGeometry(pts, seg);
+  });
+}
 // A thin ring around a limb (bearings, glove rings, reflective bands).
 const ring = (r, tube) => cached(`ring${r}|${tube}`, () => new THREE.TorusGeometry(r, tube, 8, 24).rotateX(PI / 2));
 const band = (r, h) => cached(`band${r}|${h}`, () => new THREE.CylinderGeometry(r, r, h, 24, 1, true));
@@ -86,10 +100,13 @@ function surface(fn, nu, nv, ref, seamU = false) {
 // Head-local space: origin at the top of the neck. theta runs from the crown (0) to under the chin (PI); phi = PI is the face.
 const HC = new THREE.Vector3(0, 0.145, 0), HA = 0.089, HB = 0.14, HD = 0.095;
 function headPoint(theta, phi, out, inflate = 0) {
-  const ct = Math.cos(theta), st = Math.sin(theta);
+  const ct = Math.cos(theta), st = Math.sin(theta), cp = Math.cos(phi);
   const k = 1 + 0.06 * ct - 0.16 * Math.max(0, -ct) ** 2;
-  const front = Math.max(0, -Math.cos(phi)), low = Math.max(0, -ct);
-  out.set(st * Math.sin(phi) * HA * k, ct * HB, st * Math.cos(phi) * HD * k - 0.016 * front * low * low);
+  const front = Math.max(0, -cp), back = Math.max(0, cp), low = Math.max(0, -ct), tt = theta / PI;
+  // The profile: a soft brow over the eyes, the mouth and chin a touch forward, and a slightly shallower back of the head.
+  const g = (c, w) => Math.exp(-(((tt - c) / w) ** 2)), f3 = front ** 3;
+  const fz = f3 * (0.0065 * g(0.43, 0.05) + 0.004 * g(0.72, 0.06) + 0.009 * g(0.88, 0.05));
+  out.set(st * Math.sin(phi) * HA * k, ct * HB, st * cp * HD * k * (1 - 0.08 * back) - 0.014 * front * low * low - fz);
   if (inflate) { const l = out.length() || 1; out.multiplyScalar(1 + inflate / l); }
   return out.add(HC);
 }
@@ -175,18 +192,28 @@ function patchTexture(kind, text = '') {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
 }
 
-// ---------- Hair: a few sculpted shells that follow the skull, with a clean silhouette ----------
-// The hairline: how far down from the crown (theta) the hair reaches, all the way round (phi = PI is the face).
+// ---------- Hair: a shell that follows the skull, plus sculpted clumps, with a clear silhouette ----------
+// The hairline, all the way round (phi = PI is the face). For the comms cap (a simple front / side / back blend).
 function hairline(phi, front, side, back, tilt = 0) {
   const c = Math.cos(phi), wf = Math.max(0, -c), wb = Math.max(0, c), ws = 1 - wf - wb;
   return wf * (front + tilt * Math.sin(phi)) + wb * back + ws * side;
 }
+// A real hairline: from the nape, up behind the ear, over the ear, down into a sideburn, back up at the temple, across the
+// forehead. Points are [angle from the back / PI, theta / PI]; the style changes a few of them. tilt makes it uneven (a part).
+function hairEdge(phi, { nape = 0.8, behind = 0.66, ear = 0.46, burn = 0.56, temple = 0.43, fringe = 0.28, tilt = 0 } = {}) {
+  const P = [[0, nape], [0.24, nape - 0.02], [0.4, behind], [0.5, ear], [0.6, (ear + burn) / 2], [0.66, burn], [0.75, temple], [0.87, (temple + fringe) / 2 + 0.01], [1, fringe]];
+  const a = Math.abs(Math.atan2(Math.sin(phi), Math.cos(phi))) / PI;
+  let k = 1; while (k < P.length - 1 && P[k][0] < a) k++;
+  const [a0, t0] = P[k - 1], [a1, t1] = P[k], u = clamp((a - a0) / (a1 - a0), 0, 1), e = u * u * (3 - 2 * u);
+  return (t0 + (t1 - t0) * e + tilt * Math.sin(phi) * Math.min(1, a * 1.5)) * PI;
+}
+// The base shell: thicker on top, thin at the sides and the back (so the back of the head isn't oversized), with a soft
+// rounded edge at the hairline.
 function hairShell(thick, line, nu = 56, nv = 18, extra = () => 0) {
-  const p = new THREE.Vector3();
   return surface((u, v, out) => {
     const phi = u * PI * 2, tmax = line(phi), theta = v * tmax;
-    const edge = 1 - Math.pow(v, 6);                                  // tapers to a soft rounded edge at the hairline
-    headPoint(theta, phi, out, (thick * edge + extra(theta, phi)) + 0.0015);
+    const tk = thick * (0.45 + 0.55 * Math.max(0, Math.cos(theta))) * (1 - 0.35 * Math.max(0, Math.cos(phi)));
+    headPoint(theta, phi, out, tk * (1 - Math.pow(v, 5)) + extra(theta, phi) + 0.0015);
     return out;
   }, nu, nv, HC, true);
 }
@@ -194,12 +221,11 @@ function makeHair(style, color) {
   const g = new THREE.Group(), m = toon(color, {}, 'hair'), dark = toon(shade(color, 0.78), {}, 'hairD'), tieM = toon('#E0603A', {}, 'tie');
   const R = rng(7 + style.length * 31);
   const add = (geo, mat = m) => { const mesh = new THREE.Mesh(geo, mat); g.add(mesh); return mesh; };
-  // A sculpted lock: a long rounded shape lying on the skull at (theta, phi), its length along the hair's flow.
-  // size is [width, thickness, length]; lift is how far its middle sits above the skin.
+  // A sculpted clump: a long rounded shape lying on the skull at (theta, phi), its length along the hair's flow, bent to
+  // follow the head's curve so its ends never lift off. size is [width, thickness, length].
   const locks = [], lockGeo = cached('lock', () => new THREE.SphereGeometry(1, 16, 10));
-  // Each lock is bent to follow the skull (every point is pushed back onto the head's curve), so its ends never lift off.
-  const skullR = d => { const ct = d.y, k = 1 + 0.06 * ct - 0.16 * Math.max(0, -ct) ** 2; return 1 / Math.sqrt((d.x / (HA * k)) ** 2 + (d.y / HB) ** 2 + (d.z / (HD * k)) ** 2); };
-  const lock = (theta, phi, size, flow, lift = 0.012) => {
+  const skullR = d => { const ct = d.y, k = 1 + 0.06 * ct - 0.16 * Math.max(0, -ct) ** 2, back = Math.max(0, d.z); return 1 / Math.sqrt((d.x / (HA * k)) ** 2 + (d.y / HB) ** 2 + (d.z / (HD * k * (1 - 0.08 * back))) ** 2); };
+  const lock = (theta, phi, size, flow, lift = 0.01) => {
     const p = headPoint(theta, phi, new THREE.Vector3()), n = p.clone().sub(HC);
     n.set(n.x / (HA * HA), n.y / (HB * HB), n.z / (HD * HD)).normalize();
     const f = new THREE.Vector3(...flow).normalize(), tg = f.addScaledVector(n, -f.dot(n)).normalize(), b = new THREE.Vector3().crossVectors(n, tg);
@@ -213,90 +239,101 @@ function makeHair(style, color) {
     }
     geo.computeVertexNormals(); locks.push(geo);
   };
-  // A free-hanging lock (long hair below the head), as a rounded shape tilted out a little.
-  const hang = (pos, size, rx = 0, rz = 0) => locks.push(lockGeo.clone().scale(...size).rotateX(rx).rotateZ(rz).translate(...pos));
-  const addLocks = (mat = m) => { if (locks.length) add(mergeGeometries(locks), mat); };
+  const addLocks = (mat = m) => { if (locks.length) { add(mergeGeometries(locks.splice(0)), mat); } };
+  // Clumps along the hairline that wrap the skull: a few at the nape, behind the ears and down the sideburns.
+  const wrap = (edge, size = [0.034, 0.008, 0.05]) => {
+    for (const a of [0.05, 0.16]) for (const s of [-1, 1]) { const ph = PI * s * a + (s < 0 ? 2 * PI : 0); lock(edge(ph) - 0.06 * PI, ph, size, [0, -1, 0.15], 0.004); }   // a neat nape
+    for (const s of [1, -1]) { const burn = s > 0 ? 0.83 * PI : 1.17 * PI; lock(edge(burn) - 0.05 * PI, burn, [0.016, 0.005, 0.04], [0, -1, -0.15], 0.003); }   // small sideburns
+  };
   if (style === 'crop') {
-    add(hairShell(0.012, phi => hairline(phi, 0.3 * PI, 0.47 * PI, 0.66 * PI), 56, 16, (t) => 0.004 * Math.cos(t)));
-    for (const [th, ph] of [[0.26, 0.9], [0.26, 1.0], [0.26, 1.1], [0.14, 0.95], [0.14, 1.12], [0.06, 1.0]]) lock(th * PI, ph * PI, [0.03, 0.012, 0.045], [0, 0.4, 1], 0.011);
+    // Short and neat: a little textured lift on top, a short fringe pushed up, tidy sides and nape.
+    const edge = phi => hairEdge(phi, { nape: 0.77, behind: 0.63, ear: 0.45, burn: 0.53, temple: 0.41, fringe: 0.3 });
+    add(hairShell(0.012, edge, 56, 16));
+    for (const [th, ph] of [[0.26, 0.9], [0.27, 1.0], [0.26, 1.1], [0.17, 0.82], [0.15, 0.97], [0.15, 1.12], [0.17, 1.25], [0.07, 1.0], [0.07, 0.6], [0.07, 1.4]])
+      lock(th * PI, ph * PI, [0.03, 0.011, 0.044], [0, 0.35, 1], 0.012);
+    wrap(edge, [0.03, 0.006, 0.04]);
     addLocks();
   } else if (style === 'sidepart') {
-    // Swept to one side from a parting, with a soft lift over the forehead.
-    const part = PI * 0.83;
-    add(hairShell(0.018, phi => hairline(phi, 0.29 * PI, 0.46 * PI, 0.64 * PI, 0.05 * PI), 64, 18, (t, ph) => {
-      const d = Math.abs(Math.atan2(Math.sin(ph - part), Math.cos(ph - part)));
-      return 0.008 * Math.sin(t * 2.2) * (ph > part || ph < 0.3 ? 1 : 0.4) - 0.006 * Math.exp(-(d * d) / 0.004) * (t < 0.9 ? 1 : 0);
-    }));
-    // Swoops from the parting (on the left of the forehead) across the top and down the right side.
-    for (const [th, ph, w, l] of [[0.22, 0.93, 0.05, 0.1], [0.24, 1.05, 0.05, 0.1], [0.27, 1.16, 0.045, 0.09], [0.12, 0.98, 0.05, 0.1], [0.12, 1.15, 0.05, 0.1], [0.3, 1.27, 0.04, 0.08], [0.05, 1.3, 0.05, 0.09]])
+    // A clear parting on the left of the forehead; the hair sweeps across the top and down the right side in a few big clumps.
+    const part = PI * 0.84, edge = phi => hairEdge(phi, { fringe: 0.29, tilt: 0.03 });
+    add(hairShell(0.014, edge, 64, 18, (t, ph) => { const d = Math.abs(Math.atan2(Math.sin(ph - part), Math.cos(ph - part))); return -0.009 * Math.exp(-(d * d) / 0.003) * (t < 0.8 ? 1 : 0); }));
+    for (const [th, ph, w, l] of [[0.24, 0.93, 0.048, 0.1], [0.24, 1.06, 0.048, 0.1], [0.27, 1.18, 0.042, 0.09], [0.13, 1.0, 0.05, 0.1], [0.12, 1.16, 0.048, 0.1], [0.04, 1.25, 0.05, 0.09]])
       lock(th * PI, ph * PI, [w, 0.016, l * 0.9], [-1, -0.3, 0.25], 0.013);
-    for (const [th, ph] of [[0.15, 0.68], [0.28, 0.6], [0.15, 1.5], [0.3, 1.42]]) lock(th * PI, ph * PI, [0.045, 0.011, 0.075], [0, -1, 0.5], 0.009);   // sides, lying flat
-    for (const [th, ph] of [[0.25, 0.08], [0.42, 0.0], [0.25, 1.92]]) lock(th * PI, ph * PI, [0.05, 0.012, 0.08], [0, -1, 0.3], 0.009);   // back
+    for (const [th, ph] of [[0.16, 0.66], [0.27, 0.6]]) lock(th * PI, ph * PI, [0.04, 0.01, 0.07], [0.2, -1, 0.5], 0.008);     // the short side of the part, combed down
+    wrap(edge);
     addLocks();
   } else if (style === 'curly') {
-    add(hairShell(0.012, phi => hairline(phi, 0.3 * PI, 0.48 * PI, 0.66 * PI), 48, 14), dark);
-    // Round curls all over the cap: a lumpy, soft silhouette.
-    const curls = [], p = new THREE.Vector3(), n = 110;
+    const edge = phi => hairEdge(phi, { nape: 0.76, behind: 0.62, ear: 0.45, burn: 0.52, fringe: 0.3 });
+    add(hairShell(0.008, edge, 48, 14), dark);
+    // Round curls over the cap, a little smaller at the back and sides so the head keeps its shape.
+    const curls = [], p = new THREE.Vector3(), n = 120;
     for (let i = 0; i < n; i++) {
-      const y = 1 - (i + 0.5) / n * 1.45, rr = Math.sqrt(Math.max(0, 1 - y * y)), a = i * 2.39996;
-      const theta = Math.acos(clamp(y, -1, 1)), phi = (a % (PI * 2) + PI * 2) % (PI * 2);
-      if (theta > hairline(phi, 0.3 * PI, 0.47 * PI, 0.64 * PI)) continue;
-      headPoint(theta, phi, p, 0.017 + R() * 0.004);
-      const s = 0.017 + R() * 0.006;
-      curls.push(new THREE.SphereGeometry(s, 10, 8).translate(p.x, p.y, p.z));
-      void rr;
+      const y = 1 - (i + 0.5) / n * 1.45, theta = Math.acos(clamp(y, -1, 1)), phi = ((i * 2.39996) % (PI * 2) + PI * 2) % (PI * 2);
+      if (theta > edge(phi) - 0.02 * PI) continue;
+      const backness = Math.max(0, Math.cos(phi)), sideness = Math.max(0, Math.cos(theta - PI / 2) - 0.6);
+      headPoint(theta, phi, p, 0.013 + R() * 0.004 - backness * 0.004);
+      const r = (0.017 + R() * 0.005) * (1 - 0.22 * backness - 0.3 * sideness);
+      curls.push(new THREE.SphereGeometry(r, 10, 8).translate(p.x, p.y, p.z));
     }
     add(mergeGeometries(curls));
   } else if (style === 'ponytail' || style === 'bun') {
-    add(hairShell(0.01, phi => hairline(phi, 0.29 * PI, 0.47 * PI, 0.66 * PI), 56, 16, (t, ph) => 0.003 * Math.max(0, Math.cos(ph))));
-    const tie = headPoint(style === 'bun' ? 0.32 * PI : 0.52 * PI, 0, new THREE.Vector3(), 0.012);
-    for (const [th, ph] of [[0.27, 0.92], [0.27, 1.08], [0.17, 0.8], [0.17, 1.2], [0.3, 0.68], [0.3, 1.32]]) lock(th * PI, ph * PI, [0.04, 0.009, 0.09], [0, style === 'bun' ? 0.6 : 0.1, 1], 0.007);
+    // Sleek, combed back to a tie; the nape is pulled up, so it fits under the helmet's comms cap.
+    const edge = phi => hairEdge(phi, { nape: 0.74, behind: 0.62, burn: 0.54, fringe: 0.29 });
+    add(hairShell(0.008, edge, 56, 16));
+    for (const [th, ph] of [[0.27, 0.92], [0.27, 1.08], [0.17, 0.8], [0.17, 1.2], [0.3, 0.68], [0.3, 1.32], [0.4, 0.58], [0.4, 1.42]])
+      lock(th * PI, ph * PI, [0.036, 0.008, 0.09], [0, style === 'bun' ? 0.6 : 0.1, 1], 0.007);
+    wrap(edge, [0.03, 0.006, 0.04]);
     addLocks();
-    const tieRing = part(new THREE.TorusGeometry(0.02, 0.0065, 8, 16), tieM, tie.toArray(), 1, [style === 'bun' ? 1.0 : 0.25, 0, 0]);
-    g.add(tieRing);
+    const tie = headPoint(style === 'bun' ? 0.3 * PI : 0.5 * PI, 0, new THREE.Vector3(), 0.01);
+    g.add(part(new THREE.TorusGeometry(0.02, 0.0065, 8, 16), tieM, tie.toArray(), 1, [style === 'bun' ? 1.0 : 0.25, 0, 0]));
     if (style === 'bun') {
-      g.add(part(BALL, m, [tie.x, tie.y + 0.012, tie.z + 0.03], [0.042, 0.038, 0.04]));
-      g.add(part(new THREE.TorusGeometry(0.03, 0.009, 8, 18), dark, [tie.x, tie.y + 0.012, tie.z + 0.03], 1, [1.0, 0, 0]));
+      g.add(part(BALL, m, [tie.x, tie.y + 0.012, tie.z + 0.028], [0.04, 0.036, 0.038]));
+      g.add(part(new THREE.TorusGeometry(0.029, 0.009, 8, 18), dark, [tie.x, tie.y + 0.012, tie.z + 0.028], 1, [1.0, 0, 0]));
     } else {
       // The tail: three tapering rounded pieces that swing a little (see update).
       const tail = joint(g, tie.toArray()); tail.userData.swing = true;
       let at = tail;
-      for (const [r0, r1, len] of [[0.032, 0.03, 0.06], [0.03, 0.022, 0.07], [0.022, 0.009, 0.075]]) {
+      for (const [r0, r1, len] of [[0.03, 0.028, 0.06], [0.028, 0.02, 0.07], [0.02, 0.008, 0.075]]) {
         at.add(part(limb(r0, r1, len, 14), m, [0, 0, 0]));
         at = joint(at, [0, -len, 0.004]); at.rotation.x = 0.16;
       }
       tail.rotation.x = 0.35;
     }
-  } else {   // long: shoulder length, falling behind the ears and down the back of the neck
-    add(hairShell(0.016, phi => hairline(phi, 0.29 * PI, 0.5 * PI, 0.6 * PI, 0.04 * PI), 64, 18, (t) => 0.006 * Math.sin(t * 2)));
-    for (const [th, ph, fx] of [[0.25, 0.9, 1], [0.25, 1.1, -1], [0.14, 0.85, 1], [0.14, 1.15, -1], [0.38, 0.62, 0.3], [0.38, 1.38, -0.3]]) lock(th * PI, ph * PI, [0.05, 0.018, 0.1], [fx, -0.6, 0.2], 0.016);
-    addLocks();
-    // Shoulder-length locks hanging behind the ears and down the back of the neck.
+  } else {   // long: a soft fringe, layered clumps over the top, and chunky locks to the shoulders
+    const edge = phi => hairEdge(phi, { nape: 0.78, behind: 0.64, ear: 0.47, burn: 0.55, fringe: 0.3, tilt: 0.03 });
+    add(hairShell(0.012, edge, 64, 18));
+    for (const [th, ph, fx] of [[0.25, 0.9, 1], [0.25, 1.1, -1], [0.14, 0.85, 1], [0.14, 1.15, -1], [0.36, 0.64, 0.3], [0.36, 1.36, -0.3], [0.08, 0.5, 0.5], [0.08, 1.5, -0.5]])
+      lock(th * PI, ph * PI, [0.048, 0.016, 0.1], [fx, -0.6, 0.2], 0.014);
+    // Shoulder-length locks hanging behind the ears and down the back of the neck (they stop above the suit's shoulders).
+    const hang = (pos, size, rx = 0, rz = 0) => locks.push(lockGeo.clone().scale(...size).rotateX(rx).rotateZ(rz).translate(...pos));
     for (let k = 0; k < 9; k++) {
-      const a = (k / 8 - 0.5) * PI * 1.15, r = 0.1, x = Math.sin(a) * r, z = Math.cos(a) * r * 0.95 + 0.012;
-      hang([x, 0.07, z], [0.034, 0.1, 0.026], -0.12 * Math.cos(a), -Math.sin(a) * 0.18);
+      const a = (k / 8 - 0.5) * PI * 1.15, r = 0.095, x = Math.sin(a) * r, z = Math.cos(a) * r * 0.9 + 0.008;
+      hang([x, 0.075, z], [0.033, 0.095, 0.024], -0.12 * Math.cos(a), -Math.sin(a) * 0.18);
     }
+    addLocks();
   }
   return g;
 }
 
 // ---------- Hands: chunky gloves, a palm, four two-part fingers and a thumb, all rounded. curl() bends them. ----------
-function makeHand(gloveM, side) {
+function makeHand(gloveM, side, gloveRing) {
   const hand = new THREE.Group(), segs = [];
-  hand.add(part(limb(0.037, 0.035, 0.035, 16), gloveM, [0, 0.01, 0]));                    // cuff
-  hand.add(part(BALL, gloveM, [0, -0.052, 0], [0.043, 0.05, 0.024]));                     // palm
+  hand.scale.setScalar(1.12);                                                              // big friendly gloves, about the size of the face
+  hand.add(part(limb(0.034, 0.039, 0.03, 18), gloveM, [0, -0.004, 0]));                  // cuff, flaring out below the glove ring
+  hand.add(part(ring(0.0405, 0.006), gloveRing, [0, -0.026, 0]));                          // cuff ring
+  hand.add(part(BALL, gloveM, [0, -0.052, 0], [0.045, 0.05, 0.029]));                      // palm, round and padded
   for (let i = 0; i < 4; i++) {
-    const len = 0.032 - Math.abs(i - 1.4) * 0.004;
-    const a = joint(hand, [-0.027 + i * 0.018, -0.088, -0.002]);
-    a.add(part(limb(0.0108, 0.0102, len, 10), gloveM));
+    const len = 0.03 - Math.abs(i - 1.4) * 0.004;
+    const a = joint(hand, [-0.0285 + i * 0.019, -0.088, -0.002]);
+    a.add(part(limb(0.0122, 0.0118, len, 12), gloveM));
     const b = joint(a, [0, -len, 0]);
-    b.add(part(limb(0.0102, 0.0095, len * 0.8, 10), gloveM));
+    b.add(part(limb(0.0118, 0.011, len * 0.8, 12), gloveM));
     segs.push(a, b);
   }
-  const thumb = joint(hand, [side * 0.036, -0.04, -0.012]);
-  thumb.add(part(limb(0.0125, 0.0115, 0.028, 10), gloveM));
+  const thumb = joint(hand, [side * 0.038, -0.038, -0.014]);
+  thumb.add(part(limb(0.0145, 0.0135, 0.028, 12), gloveM));
   const tip = joint(thumb, [0, -0.028, 0]);
-  tip.add(part(limb(0.0115, 0.0105, 0.022, 10), gloveM));
+  tip.add(part(limb(0.0135, 0.0122, 0.022, 12), gloveM));
   thumb.rotation.set(-0.5, 0, side * 0.6);
   return { hand, curl(k) { segs.forEach((s, i) => { s.rotation.x = k * (i % 2 ? 1.15 : 0.85); }); thumb.rotation.x = -0.5 - k * 0.45; tip.rotation.x = k * 0.55; } };
 }
@@ -318,7 +355,9 @@ const MOOD = {
 const SITTING = { hipY: -(HIP - SEAT), hipZ: 0.05, tx: 0.08, lL: [1.52, -1.5], lR: [1.48, -1.45] };
 const STANDING = { tx: 0.02, hx: -0.03 };
 const POSES = {
-  stand: t => ({ ...STANDING, hipX: Math.sin(t * 0.55) * 0.02, tz: Math.sin(t * 0.55 + 0.6) * 0.012, lL: [0.02, -0.03], lR: [-0.04, -0.13], aL: [0.04, 0.15, 0.18], aR: [0.06, 0.15, 0.24], curl: 0.4 }),
+  // Relaxed: weight on the left leg (the right knee softer), soft elbows, shoulders down, hands loosely curled, a slow sway.
+  stand: t => { const sw = Math.sin(t * 0.5); return { ...STANDING, hipX: 0.018 + sw * 0.012, hipY: -0.008, tz: -0.012 + Math.sin(t * 0.5 + 0.7) * 0.01, hz: 0.03 + sw * 0.015, shY: -0.012,
+    lL: [0.05, -0.1], lR: [-0.03, -0.22], aL: [-0.02 + sw * 0.02, 0.24, 0.24], aR: [0.0 - sw * 0.02, 0.22, 0.3], curl: 0.6 }; },
   walk: (t, o) => {
     const p = t * o.stride, s = Math.sin(p), c = Math.cos(p), s2 = Math.cos(2 * p);
     // Heel strike with the toe up as a leg swings forward, rolling to the toe as it pushes off behind.
@@ -327,7 +366,7 @@ const POSES = {
       tx: -0.05, hx: -0.02,
       hipY: -0.026 + 0.026 * s2, hipX: s * 0.026, hipRy: s * 0.1, tRy: -s * 0.14, tz: -s * 0.03,
       lL: [s * 0.5, -0.08 - Math.max(0, -c) * 0.9], lR: [-s * 0.5, -0.08 - Math.max(0, c) * 0.9], fL: heelToe(p), fR: heelToe(p + PI),
-      aL: [-s * 0.45, 0.13, 0.32 + Math.max(0, -s) * 0.38], aR: [s * 0.45, 0.13, 0.32 + Math.max(0, s) * 0.38], curl: 0.45, bob: s2,
+      aL: [-s * 0.45, 0.22, 0.32 + Math.max(0, -s) * 0.38], aR: [s * 0.45, 0.22, 0.32 + Math.max(0, s) * 0.38], curl: 0.45, bob: s2,
     };
   },
   // Ladder climbing, one rung per step: phase runs 0..1 through a step, parity says which diagonal pair moves (right hand
@@ -345,7 +384,7 @@ const POSES = {
       hx: c.dir >= 0 ? 0.32 : -0.35, hy: (right ? -1 : 1) * 0.16 * lift, curl: 0.95,
     };
   },
-  sit: () => ({ ...SITTING, aL: [0.35, 0.12, 0.9], aR: [0.35, 0.12, 0.9], curl: 0.4 }),
+  sit: () => ({ ...SITTING, aL: [0.35, 0.2, 0.9], aR: [0.35, 0.2, 0.9], curl: 0.5 }),
   pilot: (t, o) => ({ ...SITTING, aL: [0.72, 0.16, 0.95], aR: [0.72, 0.16, 0.95], curl: 0.85,
     tz: Math.max(-1, Math.min(1, o.turn)) * 0.1, hy: o.turn * 0.55, tx: 0.04 - Math.min(0.12, Math.max(0, o.accel) * 0.01) }),
   cook: t => ({ ...STANDING, hipX: Math.sin(t * 0.9) * 0.015, aL: [0.75, 0.08, 1.2], aR: [0.95 + Math.sin(t * 5) * 0.1, 0.08 + Math.cos(t * 5) * 0.12, 1.1], hx: -0.35, tx: -0.12, curl: 0.8, lL: [0.02, -0.05], lR: [-0.04, -0.12] }),
@@ -353,8 +392,9 @@ const POSES = {
     const bite = Math.max(0, Math.sin(t * 2.0)) ** 2;
     return { ...SITTING, aL: [0.55, 0.12, 1.1], aR: [0.6 + bite * 0.4, 0.17, 1.0 + bite * 1.2], hx: -0.2 + bite * 0.12, tx: -0.08, curl: 0.7 };
   },
-  read: t => ({ ...SITTING, aL: [0.55, -0.2, 1.65], aR: [0.55, -0.2, 1.65], hx: -0.4, hy: Math.sin(t * 0.6) * 0.1, tx: 0.1, curl: 0.6 }),
-  sleep: () => ({ lie: 1, aL: [0.15, 0.17, 0.4], aR: [0.1, 0.12, 0.3], hy: 0.4, lL: [0.1, -0.15], lR: [0.05, -0.05], curl: 0.4 }),
+  read: t => ({ ...SITTING, aL: [0.5, 0.06, 1.8], aR: [0.5, 0.06, 1.8], hx: -0.4, hy: Math.sin(t * 0.6) * 0.1, tx: 0.1, curl: 0.6 }),
+  // Asleep on the bunk, propped a little on the pillow.
+  sleep: () => ({ lie: 1, tx: -0.07, hx: -0.1, aL: [0.06, 0.16, 0.25], aR: [0.06, 0.18, 0.3], hy: 0.4, lL: [0.1, -0.15], lR: [0.05, -0.05], curl: 0.4 }),
   shower: t => { const s = Math.sin(t * 4); return { ...STANDING, aL: [2.5 + s * 0.15, 0.45, 1.7], aR: [2.5 - s * 0.15, 0.45, 1.75], hx: 0.25, curl: 0.5, hipX: s * 0.01 }; },
   garden: t => ({ tx: -0.35, hx: -0.4, lL: [0.25, -0.35], lR: [0.15, -0.3], hipY: -0.04, aL: [0.95, 0.12, 0.6], aR: [1.05 + Math.sin(t * 1.5) * 0.12, 0.08, 0.5 + Math.sin(t * 1.5) * 0.15], curl: 0.7 }),
   work: t => { const hit = Math.max(0, Math.sin(t * 6)) ** 3; return { ...STANDING, tx: -0.2, hx: -0.45, aL: [0.85, 0.17, 1.1], aR: [1.25 + hit * 0.45, 0.08, 1.3 - hit * 0.5], curl: 0.85, lL: [0.05, -0.08], lR: [-0.05, -0.12] }; },
@@ -362,10 +402,10 @@ const POSES = {
   study: t => ({ tx: -0.32, hx: -0.55, aL: [0.75, 0.3, 0.25], aR: [0.75, 0.3, 0.25 + Math.max(0, Math.sin(t * 0.8)) * 0.6], curl: 0.2, lL: [0.1, -0.05], lR: [-0.1, -0.05], hy: Math.sin(t * 0.5) * 0.2 }),
   microscope: t => ({ ...STANDING, tx: -0.42, hx: -0.5, hy: Math.sin(t * 0.3) * 0.04, aL: [0.95, 0.22, 1.2], aR: [0.9, 0.27, 1.35 + Math.sin(t * 1.3) * 0.08], curl: 0.6, lL: [0.04, -0.06], lR: [-0.06, -0.12] }),
   experiment: t => { const s = Math.sin(t * 1.4); return { ...STANDING, tx: -0.18, hx: -0.4 + s * 0.08, hy: s * 0.25, hipX: s * 0.02, aL: [0.9 + s * 0.15, 0.17, 1.15], aR: [1.0 - s * 0.15, 0.12 + s * 0.08, 1.05], curl: 0.75, lL: [0.03, -0.05], lR: [-0.05, -0.1] }; },
-  board: t => { const w = Math.sin(t * 5), pause = Math.sin(t * 0.7) > 0.4 ? 0 : 1; return { ...STANDING, hx: 0.12 - pause * 0.05, hy: Math.sin(t * 0.35) * 0.15, tRy: 0.08, aR: [1.9 + w * 0.06 * pause, 0.27 + Math.cos(t * 4) * 0.08 * pause, 0.75], aL: [0.15, 0.14, 0.6], curl: 0.8, lL: [0.02, -0.03], lR: [-0.03, -0.1] }; },
+  board: t => { const w = Math.sin(t * 5), pause = Math.sin(t * 0.7) > 0.4 ? 0 : 1; return { ...STANDING, hx: 0.12 - pause * 0.05, hy: Math.sin(t * 0.35) * 0.15, tRy: 0.08, aR: [1.9 + w * 0.06 * pause, 0.27 + Math.cos(t * 4) * 0.08 * pause, 0.75], aL: [0.15, 0.22, 0.6], curl: 0.8, lL: [0.02, -0.03], lR: [-0.03, -0.1] }; },
   tidy: t => { const lift = (Math.sin(t * 1.6) + 1) / 2; return { hipY: -0.32 * (1 - lift), tx: -0.5 + lift * 0.35, hx: -0.3, lL: [1.05 * (1 - lift) + 0.1, -1.6 * (1 - lift) - 0.1], lR: [0.95 * (1 - lift) + 0.05, -1.5 * (1 - lift) - 0.1], aL: [0.9 + lift * 0.3, 0.22, 0.5 + lift * 0.8], aR: [0.9 + lift * 0.3, 0.22, 0.5 + lift * 0.8], curl: 0.9 }; },
 };
-const ZERO = { tx: 0, tz: 0, tRy: 0, hx: 0, hy: 0, hz: 0, hipY: 0, hipX: 0, hipZ: 0, hipRy: 0, lie: 0, curl: 0, bob: 0, fL: 0, fR: 0,
+const ZERO = { tx: 0, tz: 0, tRy: 0, hx: 0, hy: 0, hz: 0, hipY: 0, hipX: 0, hipZ: 0, hipRy: 0, lie: 0, curl: 0, bob: 0, fL: 0, fR: 0, shY: 0,
   aL: [0, 0, 0], aR: [0, 0, 0], lL: [0, 0], lR: [0, 0] };
 
 export function makePilot(look = {}) {
@@ -381,28 +421,28 @@ export function makePilot(look = {}) {
   const hips = joint(posture, [0, HIP, 0]);
 
   // ----- Pelvis and legs -----
-  hips.add(part(BALL, suitPlain, [0, 0.014, 0.004], [0.126, 0.058, 0.076]));
+  hips.add(part(BALL, suitPlain, [0, 0.014, 0.004], [0.13, 0.06, 0.088]));
   // Hose connectors at the hip: one blue, one red.
   for (const [y, c] of [[-0.005, '#4F8FD6'], [-0.05, '#D65A4F']]) {
-    hips.add(part(cached('conn', () => new THREE.CylinderGeometry(0.014, 0.016, 0.03, 14).rotateX(PI / 2)), metal, [0.085, y, -0.085]));
-    hips.add(part(cached('cap', () => new THREE.CylinderGeometry(0.011, 0.011, 0.012, 14).rotateX(PI / 2)), toon(c, {}, 'c' + c), [0.085, y, -0.103]));
+    hips.add(part(cached('conn', () => new THREE.CylinderGeometry(0.014, 0.016, 0.03, 14).rotateX(PI / 2)), metal, [0.085, y, -0.095]));
+    hips.add(part(cached('cap', () => new THREE.CylinderGeometry(0.011, 0.011, 0.012, 14).rotateX(PI / 2)), toon(c, {}, 'c' + c), [0.085, y, -0.113]));
   }
   // The suit hose to the seat, plugged in only while flying.
-  const hoseCurve = new THREE.CatmullRomCurve3([new THREE.Vector3(0.085, -0.005, -0.11), new THREE.Vector3(0.18, -0.01, -0.15), new THREE.Vector3(0.29, -0.07, -0.04), new THREE.Vector3(0.31, -0.22, 0.12)]);   // over the seat's side edge to a socket on its side
+  const hoseCurve = new THREE.CatmullRomCurve3([new THREE.Vector3(0.085, -0.005, -0.12), new THREE.Vector3(0.18, -0.01, -0.16), new THREE.Vector3(0.29, -0.07, -0.04), new THREE.Vector3(0.31, -0.22, 0.12)]);   // over the seat's side edge to a socket on its side
   const hose = part(new THREE.TubeGeometry(hoseCurve, 24, 0.011, 8), toon('#3E4A5A', {}, 'hose')); hose.visible = false; hips.add(hose);
   const legs = [-1, 1].map(s => {
-    const thigh = joint(hips, [s * 0.074, -0.03, 0]);
-    thigh.add(part(BALL, suitPlain, [0, 0.01, 0], [0.08, 0.075, 0.078]));
-    thigh.add(part(limb(0.079, 0.06, 0.4), suit));
-    thigh.add(part(band(0.0735, 0.018), stripe, [0, -0.17, 0]));                               // reflective stripe
+    const thigh = joint(hips, [s * 0.078, -0.03, 0]);
+    thigh.add(part(BALL, suitPlain, [0, 0.01, 0], [0.088, 0.08, 0.088]));
+    thigh.add(part(fullLimb(0.088, 0.09, 0.066, 0.4), suit));
+    thigh.add(part(band(0.0845, 0.018), stripe, [0, -0.17, 0]));                               // reflective stripe
     const shin = joint(thigh, [0, -0.42, 0]);
-    shin.add(part(BALL, suitPlain, [0, 0, 0], 0.06));
-    shin.add(part(BALL, suitDark, [0, 0.005, -0.03], [0.05, 0.055, 0.035]));                 // knee pad
-    shin.add(part(limb(0.058, 0.05, 0.33), suit));
-    shin.add(part(band(0.0555, 0.016), stripe, [0, -0.15, 0]));
+    shin.add(part(BALL, suitPlain, [0, 0, 0], 0.066));
+    shin.add(part(BALL, suitDark, [0, 0.005, -0.036], [0.054, 0.058, 0.036]));                // knee pad
+    shin.add(part(fullLimb(0.064, 0.068, 0.053, 0.33), suit));
+    shin.add(part(band(0.0655, 0.016), stripe, [0, -0.15, 0]));
     // Chunky boots: a padded shaft, a rounded foot with a toe cap, and a thick sole.
-    shin.add(part(limb(0.064, 0.067, 0.1, 16), glove, [0, -0.27, 0]));
-    shin.add(part(ring(0.065, 0.008), gloveDark, [0, -0.27, 0]));
+    shin.add(part(limb(0.066, 0.069, 0.1, 16), glove, [0, -0.27, 0]));
+    shin.add(part(ring(0.067, 0.009), gloveDark, [0, -0.27, 0]));
     const foot = joint(shin, [0, -0.38, 0]);
     foot.add(part(cached('boot', () => new RoundedBoxGeometry(0.115, 0.085, 0.24, 3, 0.038)), glove, [0, -0.022, -0.04]));
     foot.add(part(cached('toe', () => new RoundedBoxGeometry(0.11, 0.05, 0.08, 3, 0.022)), gloveDark, [0, -0.035, -0.12]));
@@ -412,18 +452,18 @@ export function makePilot(look = {}) {
 
   // ----- Torso: a tapered, slightly flattened shape (chest, waist, hips), with the suit's hardware -----
   const torso = joint(hips, [0, 0.06, 0]);
-  const torsoGeo = cached('torso', () => new THREE.LatheGeometry([[0, -0.03], [0.1, -0.03], [0.103, 0.04], [0.1, 0.1], [0.112, 0.17], [0.128, 0.24], [0.13, 0.29], [0.12, 0.35], [0.1, 0.395], [0.07, 0.43], [0.048, 0.44], [0, 0.44]].map(([r, y]) => new THREE.Vector2(r, y)), 28));
-  torso.add(part(torsoGeo, suit, [0, 0, 0], [1, 1, 0.7]));
-  torso.add(part(ring(0.112, 0.008), suitDark, [0, 0.02, 0], [1, 1, 0.72]));                     // waist seam
+  const torsoGeo = cached('torso', () => new THREE.LatheGeometry([[0, -0.03], [0.112, -0.03], [0.116, 0.04], [0.118, 0.1], [0.126, 0.17], [0.136, 0.24], [0.138, 0.29], [0.13, 0.345], [0.11, 0.39], [0.078, 0.425], [0.05, 0.44], [0, 0.44]].map(([r, y]) => new THREE.Vector2(r, y)), 28));
+  torso.add(part(torsoGeo, suit, [0, 0, 0], [1, 1, 0.78]));
+  torso.add(part(ring(0.118, 0.008), suitDark, [0, 0.02, 0], [1, 1, 0.8]));                     // waist seam
   // Chest control panel: a few switches, a dial and two small lights.
-  const panel = joint(torso, [0, 0.25, -0.092]); panel.rotation.x = -0.12;
+  const panel = joint(torso, [0, 0.25, -0.104]); panel.rotation.x = -0.12;
   panel.add(part(cached('panel', () => new RoundedBoxGeometry(0.115, 0.075, 0.022, 2, 0.008)), metalDark));
   for (let i = 0; i < 3; i++) panel.add(part(cached('sw', () => new THREE.CylinderGeometry(0.004, 0.004, 0.016, 8).rotateX(PI / 2 - 0.4)), metal, [-0.04 + i * 0.016, 0.012, -0.015]));
   panel.add(part(cached('dial', () => new THREE.CylinderGeometry(0.016, 0.016, 0.008, 18).rotateX(PI / 2)), toon('#E9ECEF', {}, 'dial'), [0.03, 0.004, -0.013]));
   panel.add(part(cached('needle', () => new THREE.BoxGeometry(0.002, 0.012, 0.002)), flat('#D65A4F'), [0.03, 0.008, -0.018], 1, [0, 0, -0.6]));
   for (const [x, c] of [[-0.04, '#6EF0A0'], [-0.024, '#FFC56B']]) panel.add(part(BALL, flat(c), [x, -0.017, -0.012], 0.0045));
   // Name tape and patches.
-  const tape = part(new THREE.PlaneGeometry(0.085, 0.021), toon('#FFFFFF', { map: patchTexture('name', L.name) }, 'name' + L.name), [-0.058, 0.335, -0.085], 1, [0, PI, 0]);
+  const tape = part(new THREE.PlaneGeometry(0.085, 0.021), toon('#FFFFFF', { map: patchTexture('name', L.name) }, 'name' + L.name), [-0.058, 0.335, -0.097], 1, [0, PI, 0]);
   tape.rotation.set(-0.15, PI + 0.32, 0); torso.add(tape);
   // Neck ring, where the helmet locks on, and the neck itself.
   torso.add(part(ring(0.068, 0.014), metal, [0, 0.44, 0]));
@@ -433,20 +473,20 @@ export function makePilot(look = {}) {
 
   // ----- Arms: shoulder bearing, upper arm, elbow joint, forearm, glove ring, glove -----
   const arms = [-1, 1].map(s => {
-    const shoulder = joint(torso, [s * 0.15, 0.375, 0]);
-    shoulder.add(part(BALL, suitPlain, [0, -0.004, 0], [0.052, 0.05, 0.051]));
-    shoulder.add(part(ring(0.052, 0.009), metal, [0, -0.042, 0]));                           // shoulder bearing
-    shoulder.add(part(limb(0.05, 0.044, 0.27), suit));
-    shoulder.add(part(band(0.0485, 0.016), stripe, [0, -0.15, 0]));
-    const patch = part(new THREE.CircleGeometry(0.026, 24), toon('#FFFFFF', { map: patchTexture(s < 0 ? 'mission' : 'emblem') }, 'patch' + s), [s * 0.0505, -0.085, 0], 1, [0, s * PI / 2, 0]);
+    const shoulder = joint(torso, [s * 0.162, 0.37, 0]); shoulder.userData.y = 0.37;
+    shoulder.add(part(BALL, suitPlain, [0, -0.008, 0], [0.055, 0.05, 0.057]));
+    shoulder.add(part(ring(0.059, 0.008), metal, [0, -0.046, 0]));                            // shoulder bearing
+    shoulder.add(part(fullLimb(0.058, 0.061, 0.05, 0.27), suit));
+    shoulder.add(part(band(0.0595, 0.016), stripe, [0, -0.15, 0]));
+    const patch = part(new THREE.CircleGeometry(0.026, 24), toon('#FFFFFF', { map: patchTexture(s < 0 ? 'mission' : 'emblem') }, 'patch' + s), [s * 0.0615, -0.085, 0], 1, [0, s * PI / 2, 0]);
     shoulder.add(patch);
     const elbow = joint(shoulder, [0, -0.29, 0]);
-    elbow.add(part(BALL, suitPlain, [0, 0, 0], 0.046));
-    elbow.add(part(ring(0.047, 0.008), metal, [0, 0.014, 0]));                               // elbow bearing
-    elbow.add(part(limb(0.045, 0.038, 0.235), suit));
+    elbow.add(part(BALL, suitPlain, [0, 0, 0], 0.052));
+    elbow.add(part(ring(0.053, 0.008), metal, [0, 0.014, 0]));                               // elbow bearing
+    elbow.add(part(fullLimb(0.051, 0.054, 0.042, 0.235), suit));
     const wrist = joint(elbow, [0, -0.255, 0]);
-    wrist.add(part(ring(0.043, 0.011), metal, [0, 0.012, 0]));                               // glove ring
-    const h = makeHand(glove, s); h.hand.rotation.y = s * PI / 2 * 0.85; wrist.add(h.hand);
+    wrist.add(part(ring(0.049, 0.015), metal, [0, 0.008, 0]));                               // glove ring (covers the seam to the cuff)
+    const h = makeHand(glove, s, gloveDark); h.hand.rotation.y = s * PI / 2 * 0.85; wrist.add(h.hand);
     return { shoulder, elbow, wrist, hand: h };
   });
 
@@ -462,7 +502,10 @@ export function makePilot(look = {}) {
     return g;
   });
   head.add(new THREE.Mesh(faceGeo, faceMat));
-  const nose = facePoint(0, 0.1); head.add(part(BALL, skin, nose.p.addScaledVector(nose.n, 0.004).toArray(), [0.012, 0.012, 0.011]));
+  // A small, soft nose: a gentle bridge and a rounded tip, so the profile reads.
+  const nose = facePoint(0, 0.097), bridge = facePoint(0, 0.118);
+  head.add(part(BALL, skin, bridge.p.addScaledVector(bridge.n, 0.002).toArray(), [0.0085, 0.017, 0.009], [0.35, 0, 0]));
+  head.add(part(BALL, skin, nose.p.addScaledVector(nose.n, 0.0075).toArray(), [0.0125, 0.0115, 0.0115]));
   for (const s of [-1, 1]) {
     const ear = headPoint(0.53 * PI, PI / 2 * (s > 0 ? 1 : 3), new THREE.Vector3());
     head.add(part(BALL, skin, ear.toArray(), [0.011, 0.026, 0.018]));
@@ -581,7 +624,7 @@ export function makePilot(look = {}) {
       }
       const breath = reduced || anim === 'walk' || anim === 'climb' ? 0 : Math.sin(t * (asleep ? 1.1 : 1.7)) * 0.012;
 
-      posture.rotation.x = pose.lie * PI / 2;
+      posture.rotation.x = pose.lie * PI / 2; posture.position.y = pose.lie * 0.07;   // lying down: rest on the mattress, not in it
       hips.position.set(pose.hipX, HIP + pose.hipY, pose.hipZ);
       hips.rotation.set(0, pose.hipRy, -pose.hipX * 1.5);       // the pelvis tilts a little with the weight shift
       torso.rotation.set(pose.tx, pose.tRy, pose.tz + pose.hipX * 1.2);
@@ -593,6 +636,7 @@ export function makePilot(look = {}) {
       arms.forEach((a, i) => {
         const p = i ? pose.aR : pose.aL, s = i ? 1 : -1;
         // Arms reaching forward swing out a little more, so the shoulder ring and upper arm clear the chest.
+        a.shoulder.position.y = a.shoulder.userData.y + pose.shY;
         a.shoulder.rotation.set(p[0], 0, s * (p[1] + 0.16 * clamp(p[0], 0, 1.4) / 1.4)); a.elbow.rotation.x = p[2]; a.hand.curl(pose.curl);
         a.wrist.rotation.x = -p[2] * 0.15;
       });
