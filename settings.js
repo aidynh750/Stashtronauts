@@ -39,6 +39,13 @@ export const WORLD = {
     autopilot: 1500,         // the autopilot's top speed (also limited by cruiseReach)
   },
 
+  orientation: {
+    maxTurnRate: 1.5,        // radians per second: the most the ship's heading and up can turn, in every flight mode
+                             // (steering, autopilot, gravity, flying low); only the hidden jump below the clouds snaps
+    maxLeanPitch: 8,         // degrees: the drawn nose-up / nose-down lean when climbing, sinking or speeding up
+    maxLeanBank: 12,         // degrees: the drawn bank when turning
+  },
+
   // Top speeds inside a planet's air (atmosphere.js). They ease smoothly from one layer to the next.
   air: { glow: 400, upper: 400, upperLow: 120, cloud: 120, deck: 40 },
 

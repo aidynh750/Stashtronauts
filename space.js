@@ -560,7 +560,7 @@ const MAX_SPEED = SP.top, MAX_BACK = SP.back, MAX_CLIMB = SP.climb, TURN_RATE = 
 const flight = { q: new THREE.Quaternion(), speed: 0, yawVel: 0, climb: 0, sink: 0, accel: 0, turnTo: null, push: new THREE.Vector3(), bump: 0,
   gravity: 0, room: Infinity, hullDist: Infinity, sparkT: 0, touchT: 9 };
 const WORLD_UP = new THREE.Vector3(0, 1, 0), shipUp = new THREE.Vector3(0, 1, 0), shipFwd = new THREE.Vector3(0, 0, -1), camUp = new THREE.Vector3(0, 1, 0);
-const fq1 = new THREE.Quaternion(), fq2 = new THREE.Quaternion(), fv1 = new THREE.Vector3(), fv2 = new THREE.Vector3(), fv3 = new THREE.Vector3(), fm = new THREE.Matrix4();
+const fq1 = new THREE.Quaternion(), fq2 = new THREE.Quaternion(), qStart = new THREE.Quaternion(), fv1 = new THREE.Vector3(), fv2 = new THREE.Vector3(), fv3 = new THREE.Vector3(), fm = new THREE.Matrix4();
 function frameVectors() { shipUp.set(0, 1, 0).applyQuaternion(flight.q); shipFwd.set(0, 0, -1).applyQuaternion(flight.q); fwd.copy(shipFwd); }
 // The signed angle (about the ship's up) from its nose to a direction.
 function headingTo(dir) {
@@ -940,6 +940,7 @@ function fly(dt) {
   if (!outside) insideLife(dt);
   const pos = ship.root.position;
   flight.room = surface.active ? Infinity : roomAt(pos);
+  qStart.copy(flight.q);
 
   // Gravity: ease the ship's up toward the planet's "away" (or back to the world's up), turning the whole frame the least
   // amount, so the nose stays level with the new horizon. Motion that pointed down at the planet carries on as a descent.
@@ -999,6 +1000,9 @@ function fly(dt) {
   // Level flight follows the planet's curve: as the ship moves round it, its frame turns with it exactly (no lag), so
   // flying level keeps the same height above the ground instead of slowly climbing away along a straight line.
   if (gravPlanet) { fq1.setFromUnitVectors(radialBefore, fv1.copy(pos).sub(gravPlanet.group.position).normalize()); flight.q.premultiply(fq2.identity().slerp(fq1, w)).normalize(); frameVectors(); }
+  // Hard cap on how fast the ship can turn, whatever turned it this frame (steering, autopilot, gravity, the planet's curve).
+  const turned = qStart.angleTo(flight.q), maxTurn = WORLD.orientation.maxTurnRate * dt;
+  if (turned > maxTurn) { flight.q.copy(qStart.slerp(flight.q, maxTurn / turned)).normalize(); frameVectors(); }
   ship.root.quaternion.copy(flight.q);
   flight.push.multiplyScalar(Math.exp(-dt * 2));
   if (surface.active) flyLow(dt);

@@ -10,12 +10,15 @@ import { makePilot } from './pilot.js';
 import { makeCrew } from './crew.js';
 import * as T from './textures.js';
 import { buildInterior } from './interior.js';
+import { WORLD } from './settings.js';
 import { buildExterior } from './exterior.js';
 import { halfWidth, zRange, onHull } from './hull.js';
 
 // The outside is rugged and rustic: weathered khaki and olive panels, rust, charcoal trim, a few burnt-orange accents.
 export const SHIP_COLORS = { main: '#9A9470', secondary: '#5E6447', accent: '#B4592C', rust: '#7A4528', trim: '#2E3032' };
 const PI = Math.PI;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const LEAN_PITCH = WORLD.orientation.maxLeanPitch * PI / 180, LEAN_BANK = WORLD.orientation.maxLeanBank * PI / 180;
 // Interior, in meters: lower floor at 0, its ceiling at 3; upper floor at 3.5, its ceiling at 6.5.
 const S = 0.456, Y0 = -2.3;
 const LOW = 0, UP = 3.5, CEIL = 6.5;
@@ -210,8 +213,11 @@ export function makeShip(colors = SHIP_COLORS) {
 
     body.position.y = reduced ? 0 : Math.sin(t * 1.0) * 0.2 * (1 - speedFrac);
     const k = reduced ? 1 : 1 - Math.exp(-dt * 3);
-    body.rotation.z += (turnVel * 0.3 - body.rotation.z) * k;
-    body.rotation.x += (climb * 0.09 - Math.max(0, accel) * 0.002 - body.rotation.x) * k;   // nose up when climbing, down when descending
+    // The lean is only for show and never grows with speed: the speed-up dip is capped (a boost's acceleration is huge),
+    // and the whole lean is clamped to a few degrees (WORLD.orientation).
+    const bank = clamp(turnVel * 0.3, -LEAN_BANK, LEAN_BANK), dip = Math.min(0.06, Math.max(0, accel) * 0.002);
+    body.rotation.z += (bank - body.rotation.z) * k;
+    body.rotation.x += (clamp(climb * 0.09 - dip, -LEAN_PITCH, LEAN_PITCH) - body.rotation.x) * k;   // nose up when climbing, down when descending
 
     blinkT += dt;
     runningLights.forEach((l, i) => { const on = reduced || ((blinkT + i * 0.4) % 2) < 1.4; l.visible = on || i === 2; });
